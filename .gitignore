@@ -1,0 +1,40 @@
+# ---- Secrets and local settings: never commit ----
+.env
+.env.*
+*.env
+backend/.env
+!.env.example
+!backend/.env.example
+*.pem
+*.key
+*.p12
+secrets*
+credentials*.json
+.claude/settings.local.json
+
+# Local demo logins (passwords)
+demo_logins.md
+
+# Accounts databases (password hashes, audit log)
+backend/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# ---- Python ----
+backend/.venv/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# ---- Media work files ----
+video/*.mp4
+video/raw/
+
+# ---- OS / editor ----
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
