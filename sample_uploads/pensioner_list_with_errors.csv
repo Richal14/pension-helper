@@ -1,0 +1,8 @@
+name,age,bank,language,ppo_number,bank_account_number,basic_pension,commuted_amount,family_email,jeevan_pramaan_id,certificate_date
+Sita Ram Verma,74,State Bank of India,Hindi,1111 2222 3333,30099988877766,25000,0,sita.family@example.com,,
+Kamal Nath,35,Canara Bank,Hindi,2222 3333 4444,,22000,0,,,
+Rekha Iyer,70,Indian Bank,Tamil,3333 4444 5555,,21000,0,rekha-at-example.com,,
+Prem Singh,77,Punjab National Bank,Punjabi,,,26000,0,,,
+Sita Ram Verma,80,Bank of Baroda,Hindi,4444 5555 6666,,24000,0,,,
+Arun Kumar,72,UCO Bank,French,5555 6666 7777,,23000,0,,,
+Nirmala Joshi,69,Bank of Maharashtra,Marathi,6666 7777 8888,,20000,25000,,,

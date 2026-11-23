@@ -1,0 +1,324 @@
+{
+  "name": "Pension Helper – Workspaces",
+  "nodes": [
+    {
+      "id": "d6e9ed7b-b2b3-4612-8ae8-260b5b58ab5b",
+      "name": "Backend saves or reads a workspace",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pension-workspace",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "onlyRunIf": "={{ $json.headers['x-pension-key'] === 'REPLACE_WITH_YOUR_N8N_SHARED_SECRET' }}"
+        }
+      },
+      "webhookId": "a8cdd933-fe4f-4614-b668-952a372d6ed7"
+    },
+    {
+      "id": "62f7bae1-83ab-4c07-b163-86662938e542",
+      "name": "Read the request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// The backend validates everything first. The key looks like w12 (one per signed-up workspace).\nconst b = $input.first().json.body || {};\nconst v = b.values || {};\nconst key = String(b.key || '');\nif (!/^w\\d{1,9}$/.test(key)) return [{ json: { action: 'invalid', key } }];\nreturn [{ json: {\n  action: b.action === 'upsert' ? 'upsert' : 'get', key,\n  kind: v.kind === 'family' ? 'family' : 'office', name: String(v.name || '').slice(0, 120), email: String(v.email || '').slice(0, 120),\n  da_old: Number(v.da_old ?? 55), da_new: Number(v.da_new ?? 58), da_new_from: String(v.da_new_from || '2026-07'),\n  created_at: v.created_at || new Date().toISOString()\n} }];"
+      }
+    },
+    {
+      "id": "1bd7176c-d4f7-4124-afed-af800a747da2",
+      "name": "Save something?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.action }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "upsert"
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "32d79f86-455a-4a13-995b-1ca3623a3ce2",
+      "name": "Save workspace",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        200
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "I3jXUGaIDSHamJBB",
+          "cachedResultName": "workspaces"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "key",
+              "condition": "eq",
+              "keyValue": "={{ $json.key }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "key": "={{ $json.key }}",
+            "kind": "={{ $json.kind }}",
+            "name": "={{ $json.name }}",
+            "email": "={{ $json.email }}",
+            "da_old": "={{ $json.da_old }}",
+            "da_new": "={{ $json.da_new }}",
+            "da_new_from": "={{ $json.da_new_from }}",
+            "created_at": "={{ $json.created_at }}"
+          },
+          "schema": [
+            {
+              "id": "key",
+              "displayName": "key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "da_old",
+              "displayName": "da_old",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "da_new",
+              "displayName": "da_new",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "da_new_from",
+              "displayName": "da_new_from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "dc565e75-489c-47a6-baa1-ee337385c27d",
+      "name": "Read workspace",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "I3jXUGaIDSHamJBB",
+          "cachedResultName": "workspaces"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "key",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.key }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 1
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "7f47a940-a41a-4c04-b9e0-e59968e1d3cb",
+      "name": "Reply: workspace",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: !!$json.key, workspace: $json.key ? $json : null }) }}"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "58dbbe2b-df08-4c0e-ba0e-8e7334c3e6f8",
+      "name": "Sticky Note 0a392030",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        0
+      ],
+      "parameters": {
+        "content": "## Pension Helper – Workspaces\nCalled only by the backend (secret header): POST /pension-workspace\n{\"action\": \"get\" | \"upsert\", \"key\": \"w12\", \"values\": {kind, name, email, da_old, da_new, da_new_from}}\n\nEvery signed-up office or family has one workspace. Its key is the `dataset` value on all of its rows in the other tables. The scheduled workflows read this table for DA rates and the office email for the daily summary.",
+        "color": 4,
+        "width": 580,
+        "height": 220
+      }
+    }
+  ],
+  "connections": {
+    "Backend saves or reads a workspace": {
+      "main": [
+        [
+          {
+            "node": "Read the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the request": {
+      "main": [
+        [
+          {
+            "node": "Save something?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save something?": {
+      "main": [
+        [
+          {
+            "node": "Save workspace",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read workspace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save workspace": {
+      "main": [
+        [
+          {
+            "node": "Read workspace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read workspace": {
+      "main": [
+        [
+          {
+            "node": "Reply: workspace",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Pension Helper: backend-only webhook to save or read one workspace (an office or a family that signed up): name, email and its DA rates. All other workflows read the same table."
+  }
+}

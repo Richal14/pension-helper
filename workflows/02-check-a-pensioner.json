@@ -1,0 +1,580 @@
+{
+  "name": "Pension Helper – Check a Pensioner (Dashboard API)",
+  "nodes": [
+    {
+      "id": "31f18cc9-0275-42c3-ac84-dab1b011d7c1",
+      "name": "Dashboard asks to check a pensioner",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pension-check",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*",
+          "onlyRunIf": "={{ $json.headers['x-pension-key'] === 'REPLACE_WITH_YOUR_N8N_SHARED_SECRET' }}"
+        }
+      },
+      "webhookId": "695b6968-ddbb-41e3-8e34-5bef7322603f"
+    },
+    {
+      "id": "701d3bb9-5cc0-4cc0-b2d8-ae6ee744bc63",
+      "name": "Read pensioner name",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "pname",
+              "name": "name",
+              "value": "={{ $json.body?.name ?? $json.query?.name ?? $json.name ?? \"Ramesh Kumar\" }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "7b59f6e1-eb22-4806-aea4-6c3509b2fa10",
+      "name": "Get pensioner profile",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "={{ $json.name }}"
+            }
+          ]
+        },
+        "returnAll": true,
+        "limit": 1
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "6faaf62e-837e-49a2-b46d-723b571205a9",
+      "name": "Get pension payments",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ehw1P5kSSm4LjD8n",
+          "cachedResultName": "pension_payments"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "={{ $('Read pensioner name').first().json.name }}"
+            }
+          ]
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "b47952ba-4992-42f1-8d5c-010c41417eb3",
+      "name": "Check deadline and payments",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Pension Helper: checks one pensioner of ONE workspace (the backend sends {name, dataset}).\nconst DS = String($('Dashboard asks to check a pensioner').first().json.body?.dataset || '');\nconst WS = Object.fromEntries($('Get workspaces').all().map(i => i.json).filter(w => w.key).map(w => [w.key, w]));\nconst W = WS[DS] || {};\nconst mine = r => !!DS && /^w\\d+$/.test(DS) && r.dataset === DS;\nconst DA_OLD = Number(W.da_old ?? 55);\nconst DA_NEW = Number(W.da_new ?? 58);\nconst DA_NEW_FROM = W.da_new_from || '2026-07';\nconst URGENT_DAYS = 7;\n\nconst zone = 'Asia/Kolkata';\nconst today = DateTime.now().setZone(zone).startOf('day');\nconst year = today.year;\nconst inr = (n) => '₹' + Math.round(n).toLocaleString('en-IN');\nconst monthLabel = (m) => DateTime.fromFormat(m, 'yyyy-MM').toFormat('LLLL yyyy');\nconst dayIn = v => v ? DateTime.fromISO(typeof v === 'string' ? v : new Date(v).toISOString()).setZone(zone).toISODate() : null;\n\nconst profile = $('Get pensioner profile').all().map(i => i.json).find(p => p.name && mine(p)) || {};\nconst requested = $('Read pensioner name').first().json.name;\n\nif (!profile.name) {\n  return [{ json: { found: false, name: requested, dataset: DS, needs_letter: false, issues: ['No pensioner found with this name.'], steps: [] } }];\n}\n\nconst openMonth = profile.age >= 80 ? 10 : 11;\nconst openDate = DateTime.fromObject({ year, month: openMonth, day: 1 }, { zone });\nconst deadline = DateTime.fromObject({ year, month: 11, day: 30 }, { zone });\nconst daysLeft = Math.round(deadline.diff(today, 'days').days);\nconst verifiedUntil = dayIn(profile.lc_verified_until);\nconst submitted = !!verifiedUntil && verifiedUntil > deadline.toISODate();\n\nlet lcStatus;\nif (submitted) lcStatus = 'done';\nelse if (today < openDate) lcStatus = 'not_open_yet';\nelse if (daysLeft < 0) lcStatus = 'missed';\nelse if (daysLeft <= URGENT_DAYS) lcStatus = 'urgent';\nelse lcStatus = 'open';\n\nconst lcText = {\n  done: 'Verified until ' + (verifiedUntil ? DateTime.fromISO(verifiedUntil).toFormat('d LLLL yyyy') : '') + ' ✓ (Jeevan Pramaan ID ' + (profile.pramaan_id || '-') + '). Nothing to do this year.',\n  not_open_yet: 'Submission window opens on ' + openDate.toFormat('d LLLL') + '.',\n  open: 'Not submitted yet. ' + daysLeft + ' days left (deadline ' + deadline.toFormat('d LLLL') + ').',\n  urgent: 'Not submitted yet. Only ' + daysLeft + ' days left! Deadline ' + deadline.toFormat('d LLLL') + '.',\n  missed: 'Deadline missed. Pension may pause from December until it is submitted.'\n}[lcStatus];\nconst lcLevel = { done: 'ok', not_open_yet: 'ok', open: 'warning', urgent: 'alert', missed: 'alert' }[lcStatus];\n\nconst rows = $('Get pension payments').all().map(i => i.json).filter(r => r.month && r.name === profile.name && mine(r)).sort((a, b) => (a.month < b.month ? -1 : 1));\nconst payments = rows.map(r => {\n  const da = r.month >= DA_NEW_FROM ? DA_NEW : DA_OLD;\n  const expected = Math.round(r.basic_pension * (1 + da / 100) - (r.commuted_amount || 0));\n  const received = Number(r.amount_received) || 0;\n  const difference = expected - received;\n  let status = 'ok';\n  if (received === 0) status = 'missing';\n  else if (difference > 0) status = 'short';\n  return { month: r.month, month_label: monthLabel(r.month), da_percent: da, expected, received, difference, status };\n});\n\nconst problems = payments.filter(p => p.status !== 'ok');\nconst amountShort = problems.reduce((s, p) => s + p.difference, 0);\nconst issues = [];\nif (lcLevel !== 'ok') issues.push(lcText);\nproblems.forEach(p => {\n  if (p.status === 'missing') issues.push('No pension credited for ' + p.month_label + ' (' + inr(p.expected) + ' expected).');\n  else issues.push(p.month_label + ': paid ' + inr(p.received) + ' instead of ' + inr(p.expected) + ' (short by ' + inr(p.difference) + ').');\n});\n\nconst paymentStatus = payments.length === 0 ? 'no_data' : (problems.length ? 'problem' : 'ok');\nconst paymentText = payments.length === 0\n  ? 'No bank statement data found.'\n  : problems.length\n    ? problems.length + ' problem month(s) found. Total missing: ' + inr(amountShort) + '.'\n    : 'All ' + payments.length + ' payments arrived in full.';\n\nconst problemLines = problems.map(p => '- ' + p.month_label + ': expected ' + inr(p.expected) + ', received ' + inr(p.received) + ', difference ' + inr(p.difference)).join('\\n');\nconst templateLetter = 'To,\\nThe Branch Manager / Pension Cell,\\n' + profile.bank + '\\n\\n'\n  + 'Subject: Request to release pending pension amount – PPO ending ' + profile.ppo_last4 + '\\n\\n'\n  + 'Respected Sir/Madam,\\n\\n'\n  + 'I, ' + profile.name + ', am a pensioner drawing my pension through your bank (PPO number ending ' + profile.ppo_last4 + '). '\n  + 'On checking my bank statement, I found the following issues with my pension credits:\\n\\n'\n  + problemLines + '\\n\\n'\n  + 'Total amount pending: ' + inr(amountShort) + '.\\n\\n'\n  + 'I kindly request you to look into this and release the pending amount at the earliest. '\n  + 'I will be happy to provide any documents you need.\\n\\n'\n  + 'Thanking you,\\n\\n' + profile.name + '\\nSignature: ____________\\nDate: ____________';\n\nreturn [{\n  json: {\n    found: true,\n    dataset: DS,\n    checked_at: DateTime.now().setZone(zone).toISO(),\n    pensioner: { name: profile.name, age: profile.age, bank: profile.bank, ppo_last4: profile.ppo_last4, language: profile.language, family_email: profile.family_email },\n    life_certificate: {\n      status: lcStatus, level: lcLevel, days_left: daysLeft, submitted,\n      verified_until: submitted ? verifiedUntil : null, pramaan_id: submitted ? (profile.pramaan_id || null) : null,\n      window_opens: openDate.toFormat('d LLLL yyyy'), deadline: deadline.toFormat('d LLLL yyyy'), message: lcText\n    },\n    payment_check: { status: paymentStatus, message: paymentText, amount_short: amountShort, months: payments },\n    steps: [\n      { key: 'deadline', title: 'Life certificate check', level: lcLevel, detail: lcText },\n      { key: 'payments', title: 'Pension payment check', level: paymentStatus === 'problem' ? 'alert' : 'ok', detail: paymentText }\n    ],\n    issues,\n    issues_count: issues.length,\n    needs_letter: problems.length > 0,\n    problem_summary: problemLines,\n    template_letter: templateLetter\n  }\n}];"
+      }
+    },
+    {
+      "id": "4db2f689-4969-4a5c-a514-eaf6acc5d3a2",
+      "name": "Payment problem found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.needs_letter }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "f7c9f8db-7fe7-45cd-9ef0-d7bb72427950",
+      "name": "AI writes grievance letter",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1480,
+        200
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write the grievance letter for this pensioner.\n\nPensioner name: {{ $json.pensioner.name }}\nAge: {{ $json.pensioner.age }}\nBank: {{ $json.pensioner.bank }}\nPPO number ends with: {{ $json.pensioner.ppo_last4 }}\nTotal amount pending: {{ $json.payment_check.amount_short }} rupees\nProblem months:\n{{ $json.problem_summary }}",
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You are Pension Helper, a careful assistant for retired pensioners in India.\n\nWrite a short, formal, polite grievance letter in English from the pensioner to the Branch Manager / Pension Cell of their bank, asking them to release the missing or short pension amount.\n\nRules:\n- Start with \"To,\" then \"The Branch Manager / Pension Cell,\" and the bank name.\n- Include a clear Subject line mentioning the PPO number ending digits.\n- List each problem month with expected amount, received amount and difference. Show money in Indian format, e.g. ₹47,400.\n- State the total pending amount and make one clear request: release the pending amount and confirm in writing.\n- Never include a full account number, Aadhaar number, PIN or OTP.\n- End with \"Thanking you,\" the pensioner name, and blank lines for Signature and Date.\n- Under 220 words. Plain text only, no markdown."
+            }
+          ]
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "21041dd6-e8dc-484e-be5f-556665c5f5cb",
+      "name": "Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.6,
+      "position": [
+        1480,
+        520
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-5",
+          "cachedResultName": "Claude Sonnet 5"
+        },
+        "options": {
+          "maxTokensToSample": 900
+        }
+      }
+    },
+    {
+      "id": "1654540d-0aa1-452a-82bf-53b0729da39b",
+      "name": "Use AI letter (or template if AI is busy)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1760,
+        200
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ltr",
+              "name": "letter",
+              "value": "={{ ($json.text && $json.text.length > 80) ? $json.text : $('Check deadline and payments').first().json.template_letter }}",
+              "type": "string"
+            },
+            {
+              "id": "lsrc",
+              "name": "letter_source",
+              "value": "={{ ($json.text && $json.text.length > 80) ? 'ai' : 'template' }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4dd21881-7b0b-4f6e-93b4-8b16784e244a",
+      "name": "Send result to dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2020,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify(Object.assign({}, $('Check deadline and payments').first().json, { pensioner: Object.assign({}, $('Check deadline and payments').first().json.pensioner, { family_email: undefined }), letter: $json.letter, letter_source: $json.letter_source, template_letter: undefined })) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "cfb7d47f-0473-459b-b048-bbc876d49a14",
+      "name": "No letter needed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1760,
+        420
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ltr2",
+              "name": "letter",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "lsrc2",
+              "name": "letter_source",
+              "value": "none",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "578a0641-2ea8-48b3-bdff-356aab54be88",
+      "name": "Save to run log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2260,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "W6iSbJiPjep17YII",
+          "cachedResultName": "run_log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "run_at": "={{ $now.toISO() }}",
+            "name": "={{ $('Check deadline and payments').first().json.pensioner?.name ?? $('Read pensioner name').first().json.name }}",
+            "lc_status": "={{ $('Check deadline and payments').first().json.life_certificate?.status ?? 'unknown' }}",
+            "payment_status": "={{ $('Check deadline and payments').first().json.payment_check?.status ?? 'unknown' }}",
+            "issues_count": "={{ $('Check deadline and payments').first().json.issues_count ?? 0 }}",
+            "amount_short": "={{ $('Check deadline and payments').first().json.payment_check?.amount_short ?? 0 }}",
+            "letter_source": "={{ $json.letter_source ?? \"none\" }}",
+            "dataset": "={{ $('Check deadline and payments').first().json.dataset }}"
+          },
+          "schema": [
+            {
+              "id": "run_at",
+              "displayName": "run_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lc_status",
+              "displayName": "lc_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "payment_status",
+              "displayName": "payment_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "issues_count",
+              "displayName": "issues_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "amount_short",
+              "displayName": "amount_short",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "letter_source",
+              "displayName": "letter_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dataset",
+              "displayName": "dataset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "49904e60-8a0e-4075-86e8-ff6d00138cd5",
+      "name": "Sticky Note 3d238bd4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -40
+      ],
+      "parameters": {
+        "content": "## Pension Helper – Check a pensioner\nCalled by the dashboard (POST /pension-check with {\"name\": \"Ramesh Kumar\"}).\n\n1. Read the pensioner and their bank statement\n2. Check the life certificate deadline and every pension payment\n3. If money is missing, Claude writes a grievance letter (template letter if the AI is busy)\n4. Send the result back to the dashboard and save it to the run log\n\n**Demo DA rates live in the \"Check deadline and payments\" node. Replace them with the official DA order.**",
+        "color": 4,
+        "width": 520,
+        "height": 280
+      }
+    },
+    {
+      "id": "1c0c41bc-87ac-4283-ba6a-94bec55c6e9e",
+      "name": "Get workspaces",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        840,
+        460
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "I3jXUGaIDSHamJBB",
+          "cachedResultName": "workspaces"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Dashboard asks to check a pensioner": {
+      "main": [
+        [
+          {
+            "node": "Read pensioner name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read pensioner name": {
+      "main": [
+        [
+          {
+            "node": "Get pensioner profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get pensioner profile": {
+      "main": [
+        [
+          {
+            "node": "Get pension payments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check deadline and payments": {
+      "main": [
+        [
+          {
+            "node": "Payment problem found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payment problem found?": {
+      "main": [
+        [
+          {
+            "node": "AI writes grievance letter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No letter needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI writes grievance letter": {
+      "main": [
+        [
+          {
+            "node": "Use AI letter (or template if AI is busy)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI writes grievance letter",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use AI letter (or template if AI is busy)": {
+      "main": [
+        [
+          {
+            "node": "Send result to dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send result to dashboard": {
+      "main": [
+        [
+          {
+            "node": "Save to run log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No letter needed": {
+      "main": [
+        [
+          {
+            "node": "Send result to dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get pension payments": {
+      "main": [
+        [
+          {
+            "node": "Get workspaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get workspaces": {
+      "main": [
+        [
+          {
+            "node": "Check deadline and payments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Dashboard API for Pension Helper: checks a pensioner's life certificate deadline and pension payments, drafts a grievance letter with Claude (template fallback), logs the run."
+  }
+}

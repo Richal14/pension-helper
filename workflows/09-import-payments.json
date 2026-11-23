@@ -1,0 +1,221 @@
+{
+  "name": "Pension Helper – Import Payments (from bank statements)",
+  "nodes": [
+    {
+      "id": "c44315a6-7a4b-47fa-94ba-40925b1d577a",
+      "name": "Backend sends statement months",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "import-payments",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "onlyRunIf": "={{ $json.headers['x-pension-key'] === 'REPLACE_WITH_YOUR_N8N_SHARED_SECRET' }}"
+        }
+      },
+      "webhookId": "902a488b-07e6-40d0-bb23-9744277c92d8"
+    },
+    {
+      "id": "0e3d3aa7-a3a4-41f2-9c00-471ea7afaedd",
+      "name": "One item per month",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Only month totals arrive here: the bank statement file and its account numbers stay out of n8n.\nconst b = $input.first().json.body || {};\nconst dataset = /^w\\d{1,9}$/.test(String(b.dataset || '')) ? String(b.dataset) : null;\nif (!dataset) return [];\nreturn (b.months || [])\n  .filter(m => /^\\d{4}-\\d{2}$/.test(String(m.month)) && Number(m.amount_received) >= 0)\n  .map(m => ({ json: {\n    name: String(b.name || ''), dataset, month: String(m.month), amount_received: Math.round(Number(m.amount_received)),\n    basic_pension: Number(b.basic_pension) || 0, commuted_amount: Number(b.commuted_amount) || 0\n  } }));"
+      }
+    },
+    {
+      "id": "fc488a50-64c7-49a4-9141-4648d03ae109",
+      "name": "Save each month",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ehw1P5kSSm4LjD8n",
+          "cachedResultName": "pension_payments"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "={{ $json.name }}"
+            },
+            {
+              "keyName": "month",
+              "condition": "eq",
+              "keyValue": "={{ $json.month }}"
+            },
+            {
+              "keyName": "dataset",
+              "condition": "eq",
+              "keyValue": "={{ $json.dataset }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{ $json.name }}",
+            "month": "={{ $json.month }}",
+            "dataset": "={{ $json.dataset }}",
+            "amount_received": "={{ $json.amount_received }}",
+            "basic_pension": "={{ $json.basic_pension }}",
+            "commuted_amount": "={{ $json.commuted_amount }}"
+          },
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "month",
+              "displayName": "month",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dataset",
+              "displayName": "dataset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "amount_received",
+              "displayName": "amount_received",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "basic_pension",
+              "displayName": "basic_pension",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "commuted_amount",
+              "displayName": "commuted_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "99f55d8e-1d3c-4a0b-8194-80d0098c487d",
+      "name": "Reply: saved",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, months_saved: $('One item per month').all().length }) }}"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "cdddda7d-6c5e-44a5-9353-c3337e6aaaf7",
+      "name": "Sticky Note 77675608",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        0
+      ],
+      "parameters": {
+        "content": "## Pension Helper – Import Payments\nCalled only by the backend (secret header): POST /import-payments\n{\"dataset\", \"name\", \"basic_pension\", \"commuted_amount\", \"months\": [{\"month\": \"2026-10\", \"amount_received\": 31600}]}\n\nThe backend reads the uploaded CSV/PDF statement itself and sends ONLY the month totals of pension credits. Each month is saved once (re-uploading a month updates it).",
+        "color": 4,
+        "width": 560,
+        "height": 220
+      }
+    }
+  ],
+  "connections": {
+    "Backend sends statement months": {
+      "main": [
+        [
+          {
+            "node": "One item per month",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per month": {
+      "main": [
+        [
+          {
+            "node": "Save each month",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save each month": {
+      "main": [
+        [
+          {
+            "node": "Reply: saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Pension Helper: backend-only webhook. Stores the monthly pension credits read from an uploaded bank statement, one row per month (updates the month if it already exists). The statement file itself is never sent here."
+  }
+}

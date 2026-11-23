@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pension Helper · Pension status</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap" rel="stylesheet">
+<meta name="color-scheme" content="light dark">
+<script>(function(){var d=document.documentElement,t,m=null,q=/[?&]motion=(on|auto)/.exec(location.search);try{if(q){q[1]==='on'?localStorage.setItem('ph-motion','on'):localStorage.removeItem('ph-motion')}t=localStorage.getItem('ph-theme');m=localStorage.getItem('ph-motion')}catch(e){}d.dataset.theme=t==='dark'||t==='light'?t:(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');if(m==='on')d.classList.add('force-motion');if(m==='on'||!matchMedia('(prefers-reduced-motion: reduce)').matches)d.classList.add('js-anim')})();</script>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+<header class="status-top">
+  <a class="brand" href="/"><div class="logo" data-icon="logo"></div><div><div class="brand-name">Pension Helper</div><div class="brand-sub" data-t="brandSub">Pension status</div></div></a>
+  <div class="nav-actions" style="flex-wrap:wrap">
+    <span data-theme-toggle></span>
+    <div class="seg" role="group" aria-label="Language / भाषा">
+      <button type="button" data-lang="en" lang="en">English</button>
+      <button type="button" data-lang="hi" lang="hi">हिंदी</button>
+    </div>
+    <button class="btn small" type="button" id="leave" data-t="leave">Check another pensioner</button>
+  </div>
+</header>
+<main class="status-main">
+  <div class="page-head">
+    <div><h1 data-t="title">Pension status</h1><p data-t="subtitle">From the records of your pension office. Read only.</p></div>
+  </div>
+  <div class="banner" id="error"><div><strong data-t="loadError">Couldn't load the status.</strong> <span id="error-text"></span></div></div>
+  <div id="result" aria-busy="true">
+    <div class="card skeleton-card" style="margin-bottom:18px"><div class="skel-row"><div class="skeleton circle" style="width:54px;height:54px"></div><div style="flex:1;display:grid;gap:10px"><div class="skeleton" style="width:40%;height:20px"></div><div class="skeleton" style="width:65%"></div></div></div></div>
+    <div class="status-grid">
+      <div class="card skeleton-card"><div class="skeleton" style="width:35%"></div><div class="skeleton" style="width:55%;height:30px"></div><div class="skeleton" style="width:45%"></div></div>
+      <div class="card skeleton-card"><div class="skeleton" style="width:35%"></div><div class="skeleton" style="width:55%;height:30px"></div><div class="skeleton" style="width:45%"></div></div>
+    </div>
+    <div class="card skeleton-card"><div class="skeleton" style="width:30%;height:20px"></div><div class="skeleton" style="width:90%"></div><div class="skeleton" style="width:80%"></div><div class="skeleton" style="width:70%"></div></div>
+  </div>
+</main>
+<div class="modal" id="letter" role="dialog" aria-modal="true" aria-labelledby="lt-title" aria-hidden="true">
+  <div class="modal-head"><div><h3 id="lt-title"></h3><p id="lt-sub"></p></div><button class="icon-btn" type="button" data-close aria-label="Close">✕</button></div>
+  <div class="paper" id="lt-paper"></div>
+  <div class="modal-foot"><span class="note" id="lt-note"></span><div class="actions" id="lt-actions"></div></div>
+</div>
+<div class="scrim" id="scrim"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/assets/common.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="/assets/ui.js"></script>
+<script src="/assets/status.js"></script>
+</body>
+</html>

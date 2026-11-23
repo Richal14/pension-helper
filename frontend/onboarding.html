@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pension Helper · Set up</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap" rel="stylesheet">
+<meta name="color-scheme" content="light dark">
+<script>(function(){var d=document.documentElement,t,m=null,q=/[?&]motion=(on|auto)/.exec(location.search);try{if(q){q[1]==='on'?localStorage.setItem('ph-motion','on'):localStorage.removeItem('ph-motion')}t=localStorage.getItem('ph-theme');m=localStorage.getItem('ph-motion')}catch(e){}d.dataset.theme=t==='dark'||t==='light'?t:(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');if(m==='on')d.classList.add('force-motion');if(m==='on'||!matchMedia('(prefers-reduced-motion: reduce)').matches)d.classList.add('js-anim')})();</script>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+<div class="onb">
+  <header class="onb-top">
+    <a class="brand" href="/"><div class="logo" data-icon="logo"></div><div><div class="brand-name">Pension Helper</div><div class="brand-sub" id="who">Setting up</div></div></a>
+    <div class="onb-tools"><span data-theme-toggle></span><button class="btn small" type="button" id="logout">Log out</button></div>
+  </header>
+  <main class="onb-main">
+    <div class="progress" aria-label="Setup progress">
+      <div class="progress-steps">
+        <div class="pstep" data-step="1"><span class="n">1</span><span id="s1-label">Your details</span></div>
+        <div class="pstep" data-step="2"><span class="n">2</span><span>Consent</span></div>
+        <div class="pstep" data-step="3"><span class="n">3</span><span>Upload documents</span></div>
+      </div>
+      <div class="progress-bar" role="progressbar" aria-valuemin="1" aria-valuemax="3" id="pbar"><span id="pfill" style="width:0"></span></div>
+    </div>
+    <div id="step" data-auto-reveal><div class="card skeleton-card"><div class="skeleton" style="width:40%;height:24px"></div><div class="skeleton" style="width:70%"></div><div class="skeleton" style="height:46px;border-radius:14px"></div><div class="skeleton" style="height:46px;border-radius:14px"></div></div></div>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/assets/common.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="/assets/ui.js"></script>
+<script src="/assets/uploads.js"></script>
+<script src="/assets/onboarding.js"></script>
+</body>
+</html>

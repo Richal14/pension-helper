@@ -1,0 +1,940 @@
+{
+  "name": "Pension Helper – Pensioner Admin (Add / Edit / Delete)",
+  "nodes": [
+    {
+      "id": "82352d7d-920c-47be-9412-8082db9839bd",
+      "name": "Backend changes a pensioner",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pensioner-admin",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "onlyRunIf": "={{ $json.headers['x-pension-key'] === 'REPLACE_WITH_YOUR_N8N_SHARED_SECRET' }}"
+        }
+      },
+      "webhookId": "f1e8e930-1bfc-44db-99a9-28c13689b142"
+    },
+    {
+      "id": "b664091b-b483-4dc2-9975-5bc057b4a3cf",
+      "name": "Read the request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// The backend has already checked and cleaned every field (account numbers arrive as last 4 digits only).\n// action \"create_many\" adds a whole pensioner list (one item per pensioner).\nconst b = $input.first().json.body || {};\nconst dataset = /^w\\d{1,9}$/.test(String(b.dataset || '')) ? String(b.dataset) : 'invalid';\nconst one = (p, action) => ({\n  action, dataset,\n  id: Number(b.id) || 0,\n  old_name: String(b.old_name || ''),\n  name: String(p.name || ''), age: Number(p.age) || null, bank: String(p.bank || ''), language: String(p.language || ''),\n  family_email: String(p.family_email || ''), ppo_last4: String(p.ppo_last4 || ''), bank_account_last4: String(p.bank_account_last4 || ''),\n  basic_pension: Number(p.basic_pension) || 0, commuted_amount: Number(p.commuted_amount) || 0,\n  consent_given_at: p.consent_given_at || null, consent_by: String(p.consent_by || ''),\n  lc_submitted: !!p.lc_verified_until, lc_submitted_on: p.lc_submitted_on || null,\n  pramaan_id: p.pramaan_id || null, lc_verified_until: p.lc_verified_until || null,\n  lc_recorded_by: p.lc_verified_until ? 'office' : null\n});\nif (b.action === 'create_many') return (b.pensioners || []).map(p => ({ json: one(p, 'create') }));\nreturn [{ json: one(b.pensioner || {}, String(b.action || '')) }];"
+      }
+    },
+    {
+      "id": "f7f707a5-688c-42f3-8433-8043877a2d0a",
+      "name": "Which change?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "create",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "create"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "update",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "update"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "delete",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "delete"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "81a67e2d-52f2-4595-a081-ee4198d35cce",
+      "name": "Add pensioner",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{ $json.name }}",
+            "age": "={{ $json.age }}",
+            "bank": "={{ $json.bank }}",
+            "language": "={{ $json.language }}",
+            "family_email": "={{ $json.family_email }}",
+            "ppo_last4": "={{ $json.ppo_last4 }}",
+            "bank_account_last4": "={{ $json.bank_account_last4 }}",
+            "basic_pension": "={{ $json.basic_pension }}",
+            "commuted_amount": "={{ $json.commuted_amount }}",
+            "consent_given_at": "={{ $json.consent_given_at }}",
+            "consent_by": "={{ $json.consent_by }}",
+            "dataset": "={{ $json.dataset }}",
+            "lc_submitted": "={{ $json.lc_submitted }}",
+            "lc_submitted_on": "={{ $json.lc_submitted_on }}",
+            "pramaan_id": "={{ $json.pramaan_id }}",
+            "lc_verified_until": "={{ $json.lc_verified_until }}",
+            "lc_recorded_by": "={{ $json.lc_recorded_by }}"
+          },
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "age",
+              "displayName": "age",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bank",
+              "displayName": "bank",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "language",
+              "displayName": "language",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "family_email",
+              "displayName": "family_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ppo_last4",
+              "displayName": "ppo_last4",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bank_account_last4",
+              "displayName": "bank_account_last4",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "basic_pension",
+              "displayName": "basic_pension",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "commuted_amount",
+              "displayName": "commuted_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "consent_given_at",
+              "displayName": "consent_given_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "consent_by",
+              "displayName": "consent_by",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dataset",
+              "displayName": "dataset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lc_submitted",
+              "displayName": "lc_submitted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lc_submitted_on",
+              "displayName": "lc_submitted_on",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pramaan_id",
+              "displayName": "pramaan_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lc_verified_until",
+              "displayName": "lc_verified_until",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lc_recorded_by",
+              "displayName": "lc_recorded_by",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "bca5cc77-8f41-4c4c-8e0a-3debabf3f6cd",
+      "name": "Reply: added",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        940,
+        100
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, action: 'create', id: $input.first().json.id, ids: $input.all().map(i => i.json.id) }) }}"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "43162b30-c89d-423a-842e-0603c1f681b0",
+      "name": "Update pensioner",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            },
+            {
+              "keyName": "dataset",
+              "condition": "eq",
+              "keyValue": "={{ $json.dataset }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{ $json.name }}",
+            "age": "={{ $json.age }}",
+            "bank": "={{ $json.bank }}",
+            "language": "={{ $json.language }}",
+            "family_email": "={{ $json.family_email }}",
+            "ppo_last4": "={{ $json.ppo_last4 }}",
+            "bank_account_last4": "={{ $json.bank_account_last4 }}",
+            "basic_pension": "={{ $json.basic_pension }}",
+            "commuted_amount": "={{ $json.commuted_amount }}"
+          },
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "age",
+              "displayName": "age",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bank",
+              "displayName": "bank",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "language",
+              "displayName": "language",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "family_email",
+              "displayName": "family_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ppo_last4",
+              "displayName": "ppo_last4",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bank_account_last4",
+              "displayName": "bank_account_last4",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "basic_pension",
+              "displayName": "basic_pension",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "commuted_amount",
+              "displayName": "commuted_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a0641c28-253b-40f2-8c6a-39e69924f292",
+      "name": "Update their payments",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        940,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ehw1P5kSSm4LjD8n",
+          "cachedResultName": "pension_payments"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.old_name }}"
+            },
+            {
+              "keyName": "dataset",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.dataset }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{ $('Read the request').first().json.name }}",
+            "basic_pension": "={{ $('Read the request').first().json.basic_pension }}",
+            "commuted_amount": "={{ $('Read the request').first().json.commuted_amount }}"
+          },
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "basic_pension",
+              "displayName": "basic_pension",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "commuted_amount",
+              "displayName": "commuted_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "82203cd0-465c-43f0-b8ac-11381727a535",
+      "name": "Update their letters",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1180,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "rIrkxZXlFn67OxmU",
+          "cachedResultName": "grievances"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.old_name }}"
+            },
+            {
+              "keyName": "dataset",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.dataset }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{ $('Read the request').first().json.name }}",
+            "bank": "={{ $('Read the request').first().json.bank }}"
+          },
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bank",
+              "displayName": "bank",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "edbb9cb7-2b67-4179-9c39-e78260814f9c",
+      "name": "Reply: updated",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1420,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, action: 'update', id: $('Read the request').first().json.id }) }}"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "20eef0f7-0d19-4b16-be33-7de4a6fe0c13",
+      "name": "Delete pensioner",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        500
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            },
+            {
+              "keyName": "dataset",
+              "condition": "eq",
+              "keyValue": "={{ $json.dataset }}"
+            }
+          ]
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "a17a51ad-b583-404e-9612-daeeeb649f42",
+      "name": "Delete their payments",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        940,
+        500
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ehw1P5kSSm4LjD8n",
+          "cachedResultName": "pension_payments"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.old_name }}"
+            },
+            {
+              "keyName": "dataset",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.dataset }}"
+            }
+          ]
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "47587201-ba8b-4fa7-a4f4-c4429c823d6c",
+      "name": "Delete their letters",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1180,
+        500
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "rIrkxZXlFn67OxmU",
+          "cachedResultName": "grievances"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.old_name }}"
+            },
+            {
+              "keyName": "dataset",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.dataset }}"
+            }
+          ]
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "152c489d-ccdf-4304-be0e-609c02fb4d04",
+      "name": "Delete their run log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1420,
+        500
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "W6iSbJiPjep17YII",
+          "cachedResultName": "run_log"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "name",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.old_name }}"
+            },
+            {
+              "keyName": "dataset",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.dataset }}"
+            }
+          ]
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "6c65bc85-7cc5-4055-bb55-f041c6685966",
+      "name": "Reply: deleted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1660,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, action: 'delete', id: $('Read the request').first().json.id }) }}"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "364a2eef-ef0a-4198-8af1-ec34ea6d8385",
+      "name": "Sticky Note a5607cc2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -40
+      ],
+      "parameters": {
+        "content": "## Pension Helper – Pensioner Admin\nCalled only by the backend (secret header): POST /pensioner-admin\n{\"action\": \"create\" | \"update\" | \"delete\", \"dataset\", \"id\", \"old_name\", \"pensioner\": {...}}\n\nThe backend validates every field, checks consent, and reduces PPO and bank account numbers to their last 4 digits before calling.\nUpdate also renames their payments and letters. Delete removes the pensioner and all their payments, letters and run-log rows.",
+        "color": 4,
+        "width": 600,
+        "height": 240
+      }
+    }
+  ],
+  "connections": {
+    "Backend changes a pensioner": {
+      "main": [
+        [
+          {
+            "node": "Read the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the request": {
+      "main": [
+        [
+          {
+            "node": "Which change?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which change?": {
+      "main": [
+        [
+          {
+            "node": "Add pensioner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update pensioner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete pensioner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add pensioner": {
+      "main": [
+        [
+          {
+            "node": "Reply: added",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update pensioner": {
+      "main": [
+        [
+          {
+            "node": "Update their payments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update their payments": {
+      "main": [
+        [
+          {
+            "node": "Update their letters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update their letters": {
+      "main": [
+        [
+          {
+            "node": "Reply: updated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete pensioner": {
+      "main": [
+        [
+          {
+            "node": "Delete their payments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete their payments": {
+      "main": [
+        [
+          {
+            "node": "Delete their letters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete their letters": {
+      "main": [
+        [
+          {
+            "node": "Delete their run log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete their run log": {
+      "main": [
+        [
+          {
+            "node": "Reply: deleted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Pension Helper: backend-only webhook to add, edit (with rename cascade) and delete pensioners in the current dataset. Fields are validated by the backend; account numbers arrive as last 4 digits only."
+  }
+}

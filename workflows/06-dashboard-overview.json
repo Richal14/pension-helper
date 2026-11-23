@@ -1,0 +1,238 @@
+{
+  "name": "Pension Helper – Dashboard Overview (API)",
+  "nodes": [
+    {
+      "id": "d763270d-1c90-4115-a711-962bd9935a88",
+      "name": "Dashboard asks for the overview",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "pension-overview",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*",
+          "onlyRunIf": "={{ $json.headers['x-pension-key'] === 'REPLACE_WITH_YOUR_N8N_SHARED_SECRET' }}"
+        }
+      },
+      "webhookId": "c46e3aa0-5937-40fc-96f5-d8653582325d"
+    },
+    {
+      "id": "c05b8721-5237-480e-9602-4351a824ba73",
+      "name": "Get all pensioners",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "612d51ae-f4aa-4597-974c-eb90fce2957f",
+      "name": "Get all pension payments",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ehw1P5kSSm4LjD8n",
+          "cachedResultName": "pension_payments"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c7b67260-c747-410d-8b1f-08c0fb132887",
+      "name": "Get all letters",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "rIrkxZXlFn67OxmU",
+          "cachedResultName": "grievances"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "0f1b8af8-e0f8-4985-b703-d0b77a5677ca",
+      "name": "Build the overview",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Builds everything the app needs in one reply, for ONE workspace (the backend sends ?dataset=w12).\nconst DS = String($('Dashboard asks for the overview').first().json.query?.dataset || '');\nconst WS = Object.fromEntries($('Get workspaces').all().map(i => i.json).filter(w => w.key).map(w => [w.key, w]));\nconst W = WS[DS] || {};\nconst DA_OLD = Number(W.da_old ?? 55);\nconst DA_NEW = Number(W.da_new ?? 58);\nconst DA_NEW_FROM = W.da_new_from || '2026-07';\nconst mine = r => !!DS && /^w\\d+$/.test(DS) && r.dataset === DS;\nconst URGENT_DAYS = 7;\n\nconst zone = 'Asia/Kolkata';\nconst today = DateTime.now().setZone(zone).startOf('day');\nconst year = today.year;\nconst monthLabel = (m) => DateTime.fromFormat(m, 'yyyy-MM').toFormat('LLLL yyyy');\nconst dayIn = v => v ? DateTime.fromISO(typeof v === 'string' ? v : new Date(v).toISOString()).setZone(zone).toISODate() : null;\nconst parseTimeline = (g) => {\n  let t = {};\n  try { t = JSON.parse(g.timeline || '{}') || {}; } catch (e) { t = {}; }\n  if (!t.drafted && g.created_at) t.drafted = g.created_at;\n  if (g.status !== 'draft' && g.approved_at) { const k = g.status === 'rejected' ? 'rejected' : 'approved'; if (!t[k]) t[k] = g.approved_at; }\n  return t;\n};\n\nconst pensionerRows = $('Get all pensioners').all().map(i => i.json).filter(p => p.name && mine(p));\nconst paymentRows = $('Get all pension payments').all().map(i => i.json).filter(r => r.name && r.month && mine(r));\nconst letterRows = $('Get all letters').all().map(i => i.json).filter(g => g.name && mine(g)).sort((a, b) => a.id - b.id);\n\nconst deadline = DateTime.fromObject({ year, month: 11, day: 30 }, { zone });\nconst daysLeft = Math.round(deadline.diff(today, 'days').days);\n\nconst letters = letterRows.map(g => ({\n  id: g.id, name: g.name, bank: g.bank, issue_type: g.issue_type, amount_short: g.amount_short,\n  problem_summary: g.problem_summary, letter: g.letter, letter_source: g.letter_source,\n  status: g.status, created_at: g.created_at, decided_at: g.approved_at, timeline: parseTimeline(g)\n}));\n\nconst pensioners = pensionerRows.map(p => {\n  const openDate = DateTime.fromObject({ year, month: p.age >= 80 ? 10 : 11, day: 1 }, { zone });\n  const verifiedUntil = dayIn(p.lc_verified_until);\n  const submitted = !!verifiedUntil && verifiedUntil > deadline.toISODate();\n  let lcStatus;\n  if (submitted) lcStatus = 'done';\n  else if (today < openDate) lcStatus = 'not_open_yet';\n  else if (daysLeft < 0) lcStatus = 'missed';\n  else if (daysLeft <= URGENT_DAYS) lcStatus = 'urgent';\n  else lcStatus = 'open';\n\n  const months = paymentRows\n    .filter(r => r.name === p.name)\n    .sort((a, b) => (a.month < b.month ? -1 : 1))\n    .map(r => {\n      const da = r.month >= DA_NEW_FROM ? DA_NEW : DA_OLD;\n      const expected = Math.round(r.basic_pension * (1 + da / 100) - (r.commuted_amount || 0));\n      const received = Number(r.amount_received) || 0;\n      const difference = expected - received;\n      const status = received === 0 ? 'missing' : (difference > 0 ? 'short' : 'ok');\n      return { month: r.month, month_label: monthLabel(r.month), da_percent: da, expected, received, difference: Math.max(difference, 0), status };\n    });\n  const problems = months.filter(m => m.status !== 'ok');\n  const myLetters = letters.filter(g => g.name === p.name);\n  const latest = myLetters.length ? myLetters[myLetters.length - 1] : null;\n\n  return {\n    id: p.id, name: p.name, age: p.age, bank: p.bank, ppo_last4: p.ppo_last4, language: p.language,\n    family_email: p.family_email || '', bank_account_last4: p.bank_account_last4 || null,\n    basic_pension: Number(p.basic_pension) || 0, commuted_amount: Number(p.commuted_amount) || 0,\n    consent_given_at: p.consent_given_at || null, consent_by: p.consent_by || null,\n    life_certificate: {\n      status: lcStatus, submitted,\n      submitted_on: submitted ? dayIn(p.lc_submitted_on) : null,\n      verified_until: submitted ? verifiedUntil : null,\n      pramaan_id: submitted ? (p.pramaan_id || null) : null,\n      recorded_by: submitted ? (p.lc_recorded_by || null) : null,\n      window_opens: openDate.toFormat('d LLLL yyyy'), days_left: daysLeft\n    },\n    payments: {\n      status: months.length === 0 ? 'no_data' : (problems.length ? 'problem' : 'ok'),\n      amount_short: problems.reduce((s, m) => s + m.difference, 0),\n      problem_months: problems.length,\n      months\n    },\n    letter: latest ? { id: latest.id, status: latest.status } : null\n  };\n});\n\nconst lcCount = (s) => pensioners.filter(p => p.life_certificate.status === s).length;\nconst lCount = (s) => letters.filter(g => g.status === s).length;\nconst totals = {\n  pensioners: pensioners.length,\n  lc_submitted: lcCount('done'),\n  lc_pending: lcCount('open') + lcCount('urgent') + lcCount('missed'),\n  lc_urgent: lcCount('urgent'),\n  lc_missed: lcCount('missed'),\n  payment_problem_pensioners: pensioners.filter(p => p.payments.status === 'problem').length,\n  payments_known: pensioners.filter(p => p.payments.status !== 'no_data').length,\n  amount_pending: pensioners.reduce((s, p) => s + p.payments.amount_short, 0),\n  letters_draft: lCount('draft'),\n  letters_approved: lCount('approved'),\n  letters_sent: lCount('sent'),\n  letters_resolved: lCount('resolved'),\n  letters_rejected: lCount('rejected')\n};\n\nreturn [{ json: {\n  generated_at: DateTime.now().setZone(zone).toISO(),\n  dataset: DS,\n  settings: { da_old: DA_OLD, da_new: DA_NEW, da_new_from: DA_NEW_FROM },\n  deadline: deadline.toFormat('d LLLL yyyy'),\n  deadline_iso: deadline.toISODate(),\n  days_left: daysLeft,\n  totals,\n  pensioners,\n  letters\n} }];"
+      }
+    },
+    {
+      "id": "5b34ad86-5259-46db-9d65-b3610653cd44",
+      "name": "Send overview to dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1200,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      }
+    },
+    {
+      "id": "c6deb600-062b-4d18-b2a1-39d4e54a6d71",
+      "name": "Sticky Note e53daada",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -20
+      ],
+      "parameters": {
+        "content": "## Pension Helper – Dashboard Overview\nCalled by the dashboard: GET /pension-overview\n\nReturns totals, every pensioner (life certificate + month-by-month payments + latest letter) and every grievance letter, in one reply.\n\n**Never returns email addresses.** Demo data only.",
+        "color": 4,
+        "width": 520,
+        "height": 220
+      }
+    },
+    {
+      "id": "eeaf2136-69ee-431c-b27f-fce1de5772fc",
+      "name": "Get workspaces",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        840,
+        460
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "I3jXUGaIDSHamJBB",
+          "cachedResultName": "workspaces"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Dashboard asks for the overview": {
+      "main": [
+        [
+          {
+            "node": "Get all pensioners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all pensioners": {
+      "main": [
+        [
+          {
+            "node": "Get all pension payments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all pension payments": {
+      "main": [
+        [
+          {
+            "node": "Get all letters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the overview": {
+      "main": [
+        [
+          {
+            "node": "Send overview to dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all letters": {
+      "main": [
+        [
+          {
+            "node": "Get workspaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get workspaces": {
+      "main": [
+        [
+          {
+            "node": "Build the overview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Pension Helper: GET /pension-overview returns totals, every pensioner (life certificate, monthly payments, latest letter) and all grievance letters for the dashboard. No email addresses."
+  }
+}

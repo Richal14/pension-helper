@@ -1,0 +1,517 @@
+{
+  "name": "Pension Helper – Grievance Letter Drafter",
+  "nodes": [
+    {
+      "id": "70d172f0-498f-4a2c-971b-769d57d6a1a8",
+      "name": "Every month on the 5th at 10:30 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "monthsInterval": 1,
+              "triggerAtDayOfMonth": 5,
+              "triggerAtHour": 10,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "bef9564a-e10d-44fd-b3cc-54efb963c829",
+      "name": "Get all pensioners",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "98417118-493c-4720-95e4-afe07271df80",
+      "name": "Get all pension payments",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ehw1P5kSSm4LjD8n",
+          "cachedResultName": "pension_payments"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c2e01e03-1c2a-4f07-ab11-c226edf29033",
+      "name": "Get existing letters",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "rIrkxZXlFn67OxmU",
+          "cachedResultName": "grievances"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "2735cd9c-3706-450d-92e2-7e325d0dde46",
+      "name": "Find who needs a new letter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Finds every pensioner with missing or short pension who does not already have a letter for the same problem.\n// Scheduled run: every signed-up workspace. 'Draft now' webhook: only the workspace in the request.\nconst WS = Object.fromEntries($('Get workspaces').all().map(i => i.json).filter(w => w.key).map(w => [w.key, w]));\nlet ONLY = null;\ntry { ONLY = String($('Backend asks to draft letters now').first().json.body?.dataset || '') || null; } catch (e) { ONLY = null; }\nconst active = r => !!r.dataset && r.dataset !== 'demo' && !!WS[r.dataset] && (!ONLY || r.dataset === ONLY);\nconst daFor = ds => { const w = WS[ds] || {}; return { old: Number(w.da_old ?? 55), nu: Number(w.da_new ?? 58), from: w.da_new_from || '2026-07' }; };\n\nconst inr = (n) => '₹' + Math.round(n).toLocaleString('en-IN');\nconst monthLabel = (m) => DateTime.fromFormat(m, 'yyyy-MM').toFormat('LLLL yyyy');\n\nconst pensioners = $('Get all pensioners').all().map(i => i.json).filter(p => p.name && active(p));\nconst payments = $('Get all pension payments').all().map(i => i.json).filter(r => r.name && r.month && active(r));\nconst existing = $('Get existing letters').all().map(i => i.json).filter(g => g.name && active(g));\nconst alreadyHas = new Set(existing.map(g => g.dataset + '|' + g.name + '|' + g.problem_summary));\n\nconst out = [];\nfor (const p of pensioners) {\n  const DA = daFor(p.dataset);\n  const problems = payments\n    .filter(r => r.name === p.name && r.dataset === p.dataset)\n    .sort((a, b) => (a.month < b.month ? -1 : 1))\n    .map(r => {\n      const da = r.month >= DA.from ? DA.nu : DA.old;\n      const expected = Math.round(r.basic_pension * (1 + da / 100) - (r.commuted_amount || 0));\n      const received = Number(r.amount_received) || 0;\n      const difference = expected - received;\n      const status = received === 0 ? 'missing' : (difference > 0 ? 'short' : 'ok');\n      return { month: r.month, expected, received, difference, status };\n    })\n    .filter(m => m.status !== 'ok');\n  if (!problems.length) continue;\n\n  const problemSummary = problems.map(m => '- ' + monthLabel(m.month) + ': expected ' + inr(m.expected) + ', received ' + inr(m.received) + ', difference ' + inr(m.difference)).join('\\n');\n  if (alreadyHas.has(p.dataset + '|' + p.name + '|' + problemSummary)) continue;\n\n  const amountShort = problems.reduce((s, m) => s + m.difference, 0);\n  const kinds = [...new Set(problems.map(m => m.status))];\n  const issueType = kinds.length > 1 ? 'missing_and_short' : kinds[0];\n\n  const templateLetter = 'To,\\nThe Branch Manager / Pension Cell,\\n' + p.bank + '\\n\\n'\n    + 'Subject: Request to release pending pension amount – PPO ending ' + p.ppo_last4 + '\\n\\n'\n    + 'Respected Sir/Madam,\\n\\n'\n    + 'I, ' + p.name + ', am a pensioner drawing my pension through your bank (PPO number ending ' + p.ppo_last4 + '). '\n    + 'On checking my bank statement, I found the following issues with my pension credits:\\n\\n'\n    + problemSummary + '\\n\\n'\n    + 'Total amount pending: ' + inr(amountShort) + '.\\n\\n'\n    + 'I kindly request you to release the pending amount at the earliest and confirm in writing. '\n    + 'I will be happy to provide any documents you need.\\n\\n'\n    + 'Thanking you,\\n\\n' + p.name + '\\nSignature: ____________\\nDate: ____________';\n\n  out.push({ json: { name: p.name, age: p.age, bank: p.bank, ppo_last4: p.ppo_last4, dataset: p.dataset, issue_type: issueType, problem_summary: problemSummary, amount_short: amountShort, template_letter: templateLetter } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "29173392-0b6e-461d-8813-acb19dba6040",
+      "name": "AI writes grievance letter",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1140,
+        100
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write the grievance letter for this pensioner.\n\nPensioner name: {{ $json.name }}\nAge: {{ $json.age }}\nBank: {{ $json.bank }}\nPPO number ends with: {{ $json.ppo_last4 }}\nTotal amount pending: {{ $json.amount_short }} rupees\nProblem months:\n{{ $json.problem_summary }}",
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You are Pension Helper, a careful assistant for retired pensioners in India.\n\nWrite a short, formal, polite grievance letter in English from the pensioner to the Branch Manager / Pension Cell of their bank, asking them to release the missing or short pension amount.\n\nRules:\n- Start with \"To,\" then \"The Branch Manager / Pension Cell,\" and the bank name.\n- Include a clear Subject line mentioning the PPO number ending digits.\n- List each problem month with expected amount, received amount and difference. Show money in Indian format, e.g. ₹47,400.\n- State the total pending amount and make one clear request: release the pending amount and confirm in writing.\n- Never include a full account number, Aadhaar number, PIN or OTP.\n- End with \"Thanking you,\" the pensioner name, and blank lines for Signature and Date.\n- Under 220 words. Plain text only, no markdown."
+            }
+          ]
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "a6e0297d-5ffe-4f06-b105-55939c3a7e26",
+      "name": "Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.6,
+      "position": [
+        1160,
+        320
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-5",
+          "cachedResultName": "Claude Sonnet 5"
+        },
+        "options": {
+          "maxTokensToSample": 900
+        }
+      }
+    },
+    {
+      "id": "097bce84-8171-436e-b8a9-3bf48920302b",
+      "name": "Use AI letter (or template if AI is busy)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1400,
+        100
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ltr",
+              "name": "letter",
+              "value": "={{ ($json.text && $json.text.length > 80) ? $json.text : $('Find who needs a new letter').item.json.template_letter }}",
+              "type": "string"
+            },
+            {
+              "id": "src",
+              "name": "letter_source",
+              "value": "={{ ($json.text && $json.text.length > 80) ? 'ai' : 'template' }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "434a055c-6e2e-49aa-a273-20291f33cfb8",
+      "name": "Save letter as draft",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1640,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "rIrkxZXlFn67OxmU",
+          "cachedResultName": "grievances"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{ $('Find who needs a new letter').item.json.name }}",
+            "bank": "={{ $('Find who needs a new letter').item.json.bank }}",
+            "issue_type": "={{ $('Find who needs a new letter').item.json.issue_type }}",
+            "problem_summary": "={{ $('Find who needs a new letter').item.json.problem_summary }}",
+            "amount_short": "={{ $('Find who needs a new letter').item.json.amount_short }}",
+            "letter": "={{ $json.letter }}",
+            "letter_source": "={{ $json.letter_source }}",
+            "status": "draft",
+            "created_at": "={{ $now.toISO() }}",
+            "dataset": "={{ $('Find who needs a new letter').item.json.dataset }}"
+          },
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "bank",
+              "displayName": "bank",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "issue_type",
+              "displayName": "issue_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "problem_summary",
+              "displayName": "problem_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "amount_short",
+              "displayName": "amount_short",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "letter",
+              "displayName": "letter",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "letter_source",
+              "displayName": "letter_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dataset",
+              "displayName": "dataset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "84eab550-a645-4892-b31b-e5c99cde5283",
+      "name": "Run now (test button)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "a3ace07f-d85a-42fd-923f-4571c731d6be",
+      "name": "Sticky Note 6ba38ed3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -320
+      ],
+      "parameters": {
+        "content": "## Pension Helper – Grievance Letter Drafter\nRuns on the 5th of every month at 10:30 AM (or press \"Run now\").\n\n1. Finds every pensioner with missing or short pension\n2. Skips anyone who already has a letter for the same problem\n3. Claude writes a formal letter to the bank (ready template if the AI is busy)\n4. Saves it in the grievances table as a **draft**. Nothing is sent: a person must approve it first.",
+        "color": 4,
+        "width": 560,
+        "height": 260
+      }
+    },
+    {
+      "id": "05a2029e-3c3e-430b-95c9-db1dd2e10d87",
+      "name": "Get workspaces",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        810,
+        260
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "I3jXUGaIDSHamJBB",
+          "cachedResultName": "workspaces"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    },
+    {
+      "id": "9bf9d7b6-54da-42b3-9aaf-3e62c1ff025b",
+      "name": "Backend asks to draft letters now",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        420
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "draft-letters",
+        "authentication": "none",
+        "responseMode": "lastNode",
+        "responseData": "allEntries",
+        "options": {
+          "onlyRunIf": "={{ $json.headers['x-pension-key'] === 'REPLACE_WITH_YOUR_N8N_SHARED_SECRET' }}"
+        }
+      },
+      "webhookId": "67251055-ffdc-4c56-83ee-a2086e3372fc"
+    }
+  ],
+  "connections": {
+    "Every month on the 5th at 10:30 AM": {
+      "main": [
+        [
+          {
+            "node": "Get all pensioners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all pensioners": {
+      "main": [
+        [
+          {
+            "node": "Get all pension payments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all pension payments": {
+      "main": [
+        [
+          {
+            "node": "Get existing letters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find who needs a new letter": {
+      "main": [
+        [
+          {
+            "node": "AI writes grievance letter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI writes grievance letter": {
+      "main": [
+        [
+          {
+            "node": "Use AI letter (or template if AI is busy)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI writes grievance letter",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use AI letter (or template if AI is busy)": {
+      "main": [
+        [
+          {
+            "node": "Save letter as draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now (test button)": {
+      "main": [
+        [
+          {
+            "node": "Get all pensioners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get existing letters": {
+      "main": [
+        [
+          {
+            "node": "Get workspaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get workspaces": {
+      "main": [
+        [
+          {
+            "node": "Find who needs a new letter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Backend asks to draft letters now": {
+      "main": [
+        [
+          {
+            "node": "Get all pensioners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Pension Helper: monthly, finds pensioners with missing/short pension that have no letter yet, Claude drafts a formal letter to the bank, and saves it to the grievances table as a draft for human approval."
+  }
+}

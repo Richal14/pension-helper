@@ -1,0 +1,314 @@
+{
+  "name": "Pension Helper – Life Certificate Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "476e5093-2e1f-4201-ae74-51356f1bb434",
+      "name": "Every day at 9 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "returnAll": true
+      },
+      "id": "f5bee9c2-2192-44e7-941b-f0d501567af5",
+      "name": "Get all pensioners",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        272,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// check_deadline: works out each pensioner's Life Certificate (Jeevan Pramaan) status.\n// Rules: age 80+ can submit from 1 October, everyone else from 1 November. Deadline: 30 November.\n// VERIFY ONCE: lc_verified_until after this year's deadline = done for the year, never reminded.\n// WORKSPACES: only pensioners of signed-up workspaces (dataset w12...) are reminded; old sample rows are skipped.\nconst WS = Object.fromEntries($('Get workspaces').all().map(i => i.json).filter(w => w.key).map(w => [w.key, w]));\nconst active = r => !!r.dataset && r.dataset !== 'demo' && !!WS[r.dataset];\n\nconst OPEN_MONTH_80_PLUS = 10;\nconst OPEN_MONTH_OTHERS = 11;\nconst DEADLINE_MONTH = 11;\nconst DEADLINE_DAY = 30;\nconst URGENT_DAYS = 7;\nconst MISSED_REMINDER_DAYS = 14;\n\nconst zone = 'Asia/Kolkata';\nconst today = DateTime.now().setZone(zone).startOf('day');\nconst year = today.year;\nconst dayIn = v => v ? DateTime.fromISO(typeof v === 'string' ? v : new Date(v).toISOString()).setZone(zone).toISODate() : null;\nconst results = [];\n\nfor (const item of $('Get all pensioners').all()) {\n  const p = item.json;\n  if (!p.name || !active(p)) continue;\n  const openMonth = p.age >= 80 ? OPEN_MONTH_80_PLUS : OPEN_MONTH_OTHERS;\n  const openDate = DateTime.fromObject({ year, month: openMonth, day: 1 }, { zone });\n  const deadline = DateTime.fromObject({ year, month: DEADLINE_MONTH, day: DEADLINE_DAY }, { zone });\n  const daysLeft = Math.round(deadline.diff(today, 'days').days);\n  const daysSinceOpen = Math.round(today.diff(openDate, 'days').days);\n  const verifiedUntil = dayIn(p.lc_verified_until);\n  const verified = !!verifiedUntil && verifiedUntil > deadline.toISODate();\n\n  let status;\n  if (verified) status = 'done';\n  else if (today < openDate) status = 'not_open_yet';\n  else if (daysLeft < 0) status = 'missed';\n  else if (daysLeft <= URGENT_DAYS) status = 'urgent';\n  else status = 'open';\n\n  const shouldRemind =\n    !!p.family_email && (\n    status === 'urgent' ||\n    (status === 'missed' && daysLeft >= -MISSED_REMINDER_DAYS) ||\n    (status === 'open' && daysSinceOpen % 7 === 0));\n\n  results.push({ json: { ...p, status, days_left: daysLeft, window_opens: openDate.toFormat('d LLLL yyyy'), deadline: deadline.toFormat('d LLLL yyyy'), verified_until: verifiedUntil, should_remind: shouldRemind } });\n}\n\nreturn results;"
+      },
+      "id": "adae5468-7518-4026-bc03-ddd08a06ddd5",
+      "name": "Check life certificate deadline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.should_remind }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0574ccd0-d492-4fef-a5fe-72314282296f",
+      "name": "Needs a reminder?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.4,
+      "position": [
+        720,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write the reminder email for this pensioner's family.\n\nPensioner: {{ $json.name }}\nAge: {{ $json.age }}\nBank: {{ $json.bank }}\nLife certificate status: {{ $json.status }}\nSubmission window opened on: {{ $json.window_opens }}\nDeadline: {{ $json.deadline }}\nDays left (negative means the deadline has passed): {{ $json.days_left }}\nWrite the email in: {{ $json.language }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are Pension Helper, a kind and careful assistant for retired pensioners in India and their families.\n\nWrite a short reminder email (under 150 words) to the pensioner's family about the annual Life Certificate (Jeevan Pramaan).\n\nRules:\n- Warm, respectful, simple language. Address the pensioner respectfully, for example \"Ramesh ji\".\n- Write in the language you are told. If Hindi, use simple everyday Hindi in Devanagari script.\n- Status meanings: \"open\" = they can submit now; \"urgent\" = only a few days left, say how many; \"missed\" = the deadline has passed, the pension may be paused from December, so submit as soon as possible to restart it.\n- Give the easy steps: on an Android phone, install the AadhaarFaceRD and Jeevan Pramaan Face apps, enter the pension details and do a face scan. Or visit the bank branch, post office or a Common Service Centre.\n- Remind them to save the Jeevan Pramaan ID they get by SMS.\n- Never ask for an Aadhaar number, account number, PIN or OTP. Add one line warning that no one from the bank or government will ask for an OTP.\n- Output only the email body as plain text. No subject line, no markdown."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "id": "3cfa0523-f84d-485c-81fb-b7e5a7e84e9c",
+      "name": "Write a kind reminder",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        800,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "claude-sonnet-5",
+          "cachedResultName": "Claude Sonnet 5"
+        },
+        "options": {
+          "maxTokensToSample": 800
+        }
+      },
+      "id": "add82c43-37b6-49ce-98b6-a536704c794c",
+      "name": "Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.6,
+      "position": [
+        880,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Needs a reminder?').item.json.family_email }}",
+        "subject": "={{ $('Needs a reminder?').item.json.status === 'missed' ? 'Action needed: Life certificate deadline missed' : 'Reminder: Life certificate due' }} – {{ $('Needs a reminder?').item.json.name }}",
+        "emailType": "text",
+        "message": "={{ $json.text }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Pension Helper"
+        }
+      },
+      "id": "f97b5ee9-f253-4638-8d94-e4fdd7472d56",
+      "name": "Email the family",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        128
+      ],
+      "webhookId": "7867356b-9130-4499-aa45-09ee24333cce",
+      "credentials": {
+        "gmailOAuth2": {
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Needs a reminder?').item.json.family_email }}",
+              "rightValue": "@example.com",
+              "operator": {
+                "type": "string",
+                "operation": "notEndsWith"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8fcc5406-09d2-4904-a845-36b1dcce0bd5",
+      "name": "Real email address?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.4,
+      "position": [
+        1040,
+        128
+      ]
+    },
+    {
+      "id": "6909cafb-8b82-4675-86a1-daa8fbf6fd92",
+      "name": "Get workspaces",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        384,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "I3jXUGaIDSHamJBB",
+          "cachedResultName": "workspaces"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Every day at 9 AM": {
+      "main": [
+        [
+          {
+            "node": "Get all pensioners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check life certificate deadline": {
+      "main": [
+        [
+          {
+            "node": "Needs a reminder?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs a reminder?": {
+      "main": [
+        [
+          {
+            "node": "Write a kind reminder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Write a kind reminder",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write a kind reminder": {
+      "main": [
+        [
+          {
+            "node": "Real email address?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Real email address?": {
+      "main": [
+        [
+          {
+            "node": "Email the family",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all pensioners": {
+      "main": [
+        [
+          {
+            "node": "Get workspaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get workspaces": {
+      "main": [
+        [
+          {
+            "node": "Check life certificate deadline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timezone": "Asia/Kolkata"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Pension Helper: every day at 9 AM, checks each pensioner's Life Certificate status and emails the family a kind reminder written by Claude."
+  }
+}

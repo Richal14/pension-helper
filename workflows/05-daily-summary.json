@@ -1,0 +1,275 @@
+{
+  "name": "Pension Helper – Daily Summary",
+  "nodes": [
+    {
+      "id": "8f79d88d-950d-4684-b9fc-4fe2dd6bfbd1",
+      "name": "Every day at 8 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "446929c5-1af9-4b78-8495-bf4a2d5de830",
+      "name": "Get all pensioners",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "d95d6d6d-bc14-45a3-81e5-cd0b2703d34d",
+      "name": "Get all pension payments",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ehw1P5kSSm4LjD8n",
+          "cachedResultName": "pension_payments"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "64551382-f7db-4d86-9044-e8d85d50c378",
+      "name": "Get all letters",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        700,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "rIrkxZXlFn67OxmU",
+          "cachedResultName": "grievances"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "75bcd45c-c940-493c-ab14-935b65939357",
+      "name": "Build the summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// One short daily report PER PENSION OFFICE workspace, sent to the email that office signed up with.\n// Family workspaces and offices with no pensioners get no summary. Test addresses (@example.com) are skipped.\nconst WS = $('Get workspaces').all().map(i => i.json).filter(w => w.key && w.kind === 'office' && /@/.test(w.email || '') && !/@example\\.(com|org|net)$/i.test(w.email));\nconst URGENT_DAYS = 7;\nconst zone = 'Asia/Kolkata';\nconst today = DateTime.now().setZone(zone).startOf('day');\nconst year = today.year;\nconst inr = (n) => '₹' + Math.round(n).toLocaleString('en-IN');\nconst dayIn = v => v ? DateTime.fromISO(typeof v === 'string' ? v : new Date(v).toISOString()).setZone(zone).toISODate() : null;\nconst allP = $('Get all pensioners').all().map(i => i.json);\nconst allPay = $('Get all pension payments').all().map(i => i.json);\nconst allL = $('Get all letters').all().map(i => i.json);\nconst deadline = DateTime.fromObject({ year, month: 11, day: 30 }, { zone });\nconst daysLeft = Math.round(deadline.diff(today, 'days').days);\n\nconst out = [];\nfor (const W of WS) {\n  const DS = W.key;\n  const DA_OLD = Number(W.da_old ?? 55), DA_NEW = Number(W.da_new ?? 58), DA_NEW_FROM = W.da_new_from || '2026-07';\n  const pensioners = allP.filter(p => p.name && p.dataset === DS);\n  if (!pensioners.length) continue;\n  const payments = allPay.filter(r => r.name && r.month && r.dataset === DS);\n  const letters = allL.filter(g => g.name && g.dataset === DS);\n\n  const lc = { done: [], not_open_yet: [], open: [], urgent: [], missed: [] };\n  for (const p of pensioners) {\n    const openDate = DateTime.fromObject({ year, month: p.age >= 80 ? 10 : 11, day: 1 }, { zone });\n    const verifiedUntil = dayIn(p.lc_verified_until);\n    const submitted = !!verifiedUntil && verifiedUntil > deadline.toISODate();\n    let s;\n    if (submitted) s = 'done';\n    else if (today < openDate) s = 'not_open_yet';\n    else if (daysLeft < 0) s = 'missed';\n    else if (daysLeft <= URGENT_DAYS) s = 'urgent';\n    else s = 'open';\n    lc[s].push(p.name);\n  }\n  const problems = [];\n  for (const p of pensioners) {\n    let short = 0, missing = 0, shortMonths = 0;\n    for (const r of payments.filter(r => r.name === p.name)) {\n      const da = r.month >= DA_NEW_FROM ? DA_NEW : DA_OLD;\n      const expected = Math.round(r.basic_pension * (1 + da / 100) - (r.commuted_amount || 0));\n      const received = Number(r.amount_received) || 0;\n      if (received === 0) { missing++; short += expected; }\n      else if (expected - received > 0) { shortMonths++; short += expected - received; }\n    }\n    if (short > 0) problems.push({ name: p.name, short, missing, shortMonths });\n  }\n  problems.sort((a, b) => b.short - a.short);\n  const totalShort = problems.reduce((s, p) => s + p.short, 0);\n  const count = (st) => letters.filter(g => g.status === st).length;\n  const drafts = letters.filter(g => g.status === 'draft');\n  const pending = [...lc.missed, ...lc.urgent, ...lc.open];\n\n  const lines = [];\n  lines.push('Pension Helper – Daily Summary for ' + (W.name || 'your office'));\n  lines.push(today.toFormat('cccc, d LLLL yyyy'));\n  lines.push('');\n  lines.push('LIFE CERTIFICATES (deadline 30 November' + (daysLeft >= 0 ? ', ' + daysLeft + ' days left' : ', deadline passed') + ')');\n  lines.push('- Verified for this year: ' + lc.done.length + ' of ' + pensioners.length);\n  lines.push('- Still to submit: ' + pending.length + (lc.missed.length ? ' (' + lc.missed.length + ' MISSED the deadline)' : ''));\n  if (pending.length) lines.push('  ' + pending.join(', '));\n  lines.push('');\n  lines.push('PENSION PAYMENTS (DA ' + DA_OLD + '% before ' + DA_NEW_FROM + ', ' + DA_NEW + '% from ' + DA_NEW_FROM + ')');\n  if (!problems.length) lines.push('- No missing or short payments found in the uploaded statements.');\n  else {\n    lines.push('- ' + problems.length + ' pensioners have missing or short payments. Total pending: ' + inr(totalShort));\n    for (const p of problems) {\n      const bits = [];\n      if (p.missing) bits.push(p.missing + ' month' + (p.missing > 1 ? 's' : '') + ' not paid');\n      if (p.shortMonths) bits.push(p.shortMonths + ' month' + (p.shortMonths > 1 ? 's' : '') + ' paid short');\n      lines.push('  • ' + p.name + ': ' + inr(p.short) + ' (' + bits.join(', ') + ')');\n    }\n  }\n  lines.push('');\n  lines.push('GRIEVANCE LETTERS');\n  lines.push('- Waiting for your approval: ' + drafts.length);\n  if (drafts.length) lines.push('  ' + drafts.map(g => g.name + ' (#' + g.id + ')').join(', '));\n  lines.push('- Approved: ' + count('approved') + ' | Sent to bank: ' + count('sent') + ' | Resolved: ' + count('resolved') + ' | Rejected: ' + count('rejected'));\n  lines.push('');\n  lines.push('This summary was prepared automatically by Pension Helper.');\n\n  const subject = 'Pension Helper daily summary – ' + pending.length + ' certificates due, ' + problems.length + ' payment problems, ' + drafts.length + ' letters to approve';\n  out.push({ json: { to: W.email, subject, body: lines.join('\\n') } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "4b91e09f-a03a-4a52-bf6e-593c1424f620",
+      "name": "Email the office",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1140,
+        100
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {
+          "appendAttribution": false,
+          "senderName": "Pension Helper"
+        }
+      },
+      "webhookId": "9f516a1b-f59f-4846-9116-037dc424ec3c",
+      "credentials": {
+        "gmailOAuth2": {
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "85dc4ffa-f359-4c85-9a47-2e5f786ed369",
+      "name": "Run now (test button)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "06ca0014-ab83-4f42-9b3a-28673f9c9090",
+      "name": "Sticky Note 6d360b49",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -300
+      ],
+      "parameters": {
+        "content": "## Pension Helper – Daily Summary\nEvery day at 8 AM India time (or press \"Run now\").\n\nCounts life certificates still due, pensioners with missing/short pension, and letters waiting for approval, then emails one short report to the office.\n\n**To change who gets it, edit \"Email the office\".**",
+        "color": 4,
+        "width": 520,
+        "height": 220
+      }
+    },
+    {
+      "id": "082ee375-bd15-4930-b166-0540fb007c6f",
+      "name": "Get workspaces",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        810,
+        260
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "I3jXUGaIDSHamJBB",
+          "cachedResultName": "workspaces"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Every day at 8 AM": {
+      "main": [
+        [
+          {
+            "node": "Get all pensioners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all pensioners": {
+      "main": [
+        [
+          {
+            "node": "Get all pension payments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all pension payments": {
+      "main": [
+        [
+          {
+            "node": "Get all letters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the summary": {
+      "main": [
+        [
+          {
+            "node": "Email the office",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now (test button)": {
+      "main": [
+        [
+          {
+            "node": "Get all pensioners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all letters": {
+      "main": [
+        [
+          {
+            "node": "Get workspaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get workspaces": {
+      "main": [
+        [
+          {
+            "node": "Build the summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Pension Helper: every day at 8 AM, emails the office one short report: life certificates still due, pensioners with missing/short pension, and letters waiting for approval."
+  }
+}

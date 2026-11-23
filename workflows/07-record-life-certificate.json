@@ -1,0 +1,370 @@
+{
+  "name": "Pension Helper – Record Life Certificate (Verify Once)",
+  "nodes": [
+    {
+      "id": "f38f5673-3c25-4dc3-9925-76caf372b139",
+      "name": "Backend records a life certificate",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "record-life-certificate",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "onlyRunIf": "={{ $json.headers['x-pension-key'] === 'REPLACE_WITH_YOUR_N8N_SHARED_SECRET' }}"
+        }
+      },
+      "webhookId": "b8fceb19-47c2-4beb-9c12-814e3793abb0"
+    },
+    {
+      "id": "eab621cc-3e8f-4d4c-a06e-a52dde5847d4",
+      "name": "Read the request",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "pidn",
+              "name": "id",
+              "value": "={{ Number($json.body?.id ?? 0) }}",
+              "type": "number"
+            },
+            {
+              "id": "nm",
+              "name": "name",
+              "value": "={{ String($json.body?.name ?? \"\").trim() }}",
+              "type": "string"
+            },
+            {
+              "id": "pid",
+              "name": "pramaan_id",
+              "value": "={{ String($json.body?.pramaan_id ?? \"\").trim() }}",
+              "type": "string"
+            },
+            {
+              "id": "by",
+              "name": "recorded_by",
+              "value": "={{ $json.body?.recorded_by === \"family\" ? \"family\" : \"office\" }}",
+              "type": "string"
+            },
+            {
+              "id": "on",
+              "name": "submitted_on",
+              "value": "={{ String($json.body?.submitted_on ?? \"\") }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "197d18dd-9153-419d-882e-1dca9a7132b7",
+      "name": "Find the pensioner",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 1
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "214b5287-cdb8-4f76-a597-a06157dc1053",
+      "name": "Check and work out validity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// VERIFY ONCE: a life certificate is stored once with its Jeevan Pramaan ID.\n// It stays valid until 30 November of the NEXT cycle, so nobody is asked again that year.\n// Submitted from 1 October onwards -> valid until 30 Nov next year; earlier in the year -> until 30 Nov this year.\nconst req = $('Read the request').first().json;\nconst p = $input.first().json || {};\nconst zone = 'Asia/Kolkata';\nconst today = DateTime.now().setZone(zone).startOf('day');\nconst dayIn = v => v ? DateTime.fromISO(typeof v === 'string' ? v : new Date(v).toISOString()).setZone(zone).toISODate() : null;\nconst fmt = d => DateTime.fromISO(d).toFormat('d LLLL yyyy');\nconst fail = (code, message, extra) => [{ json: Object.assign({ ok: false, code, message }, extra || {}) }];\n\nif (!p.id || !p.name) return fail('not_found', 'No pensioner found.');\nconst id = String(req.pramaan_id || '').trim().toUpperCase();\nif (!/^[A-Z0-9][A-Z0-9-]{5,29}$/.test(id)) return fail('bad_id', 'The Jeevan Pramaan ID should be 6 to 30 letters or numbers.');\n\nconst cycleDeadline = DateTime.fromObject({ year: today.year, month: 11, day: 30 }, { zone }).toISODate();\nconst current = dayIn(p.lc_verified_until);\nif (current && current > cycleDeadline) {\n  return fail('already_verified', 'Already verified until ' + fmt(current) + '. Nothing more is needed this year.', { verified_until: current, pramaan_id: p.pramaan_id });\n}\n\nconst on = req.submitted_on ? DateTime.fromISO(req.submitted_on, { zone }).startOf('day') : today;\nif (!on.isValid || on > today) return fail('bad_date', 'The submission date is not valid.');\nconst validYear = on.month >= 10 ? on.year + 1 : on.year;\nconst verifiedUntil = DateTime.fromObject({ year: validYear, month: 11, day: 30 }, { zone }).toISODate();\n\nreturn [{ json: {\n  ok: true, id: p.id, name: p.name, pramaan_id: id, submitted_on: on.toISODate(), verified_until: verifiedUntil,\n  recorded_by: req.recorded_by === 'family' ? 'family' : 'office',\n  message: 'Life certificate recorded. Verified until ' + fmt(verifiedUntil) + '.'\n} }];"
+      }
+    },
+    {
+      "id": "3023633b-f57b-4622-837f-383e2a5558de",
+      "name": "Request OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ok }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "1d091007-474f-49b5-9411-22fb929f73fa",
+      "name": "Save the certificate once",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lc_submitted": true,
+            "lc_submitted_on": "={{ $json.submitted_on }}",
+            "pramaan_id": "={{ $json.pramaan_id }}",
+            "lc_verified_until": "={{ $json.verified_until }}",
+            "lc_recorded_by": "={{ $json.recorded_by }}"
+          },
+          "schema": [
+            {
+              "id": "lc_submitted",
+              "displayName": "lc_submitted",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lc_submitted_on",
+              "displayName": "lc_submitted_on",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pramaan_id",
+              "displayName": "pramaan_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lc_verified_until",
+              "displayName": "lc_verified_until",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lc_recorded_by",
+              "displayName": "lc_recorded_by",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4323ce74-9aec-493a-a7e8-c97985493a6c",
+      "name": "Reply: recorded",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1440,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Check and work out validity').first().json) }}"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "415f1fc4-3bb0-49d5-b186-176b412be778",
+      "name": "Reply: not recorded",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1200,
+        420
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "73b7b25e-493f-40fe-929c-231bfae4cccb",
+      "name": "Sticky Note 3cca053c",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -20
+      ],
+      "parameters": {
+        "content": "## Pension Helper – Record Life Certificate (verify once)\nCalled only by the backend: POST /record-life-certificate with {\"name\", \"pramaan_id\", \"recorded_by\": \"office\" | \"family\"} (+ optional \"submitted_on\").\n\nStores the Jeevan Pramaan ID ONCE and sets lc_verified_until (30 Nov of the next cycle). Every other workflow and both pages read lc_verified_until, so nobody is asked again that year. A second recording in the same cycle is refused.",
+        "color": 4,
+        "width": 560,
+        "height": 240
+      }
+    }
+  ],
+  "connections": {
+    "Backend records a life certificate": {
+      "main": [
+        [
+          {
+            "node": "Read the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the request": {
+      "main": [
+        [
+          {
+            "node": "Find the pensioner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find the pensioner": {
+      "main": [
+        [
+          {
+            "node": "Check and work out validity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check and work out validity": {
+      "main": [
+        [
+          {
+            "node": "Request OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request OK?": {
+      "main": [
+        [
+          {
+            "node": "Save the certificate once",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply: not recorded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save the certificate once": {
+      "main": [
+        [
+          {
+            "node": "Reply: recorded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Pension Helper: backend-only webhook that stores a life certificate once with its Jeevan Pramaan ID and sets lc_verified_until, so no workflow or page asks again that year."
+  }
+}

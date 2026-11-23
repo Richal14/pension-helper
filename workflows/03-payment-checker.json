@@ -1,0 +1,321 @@
+{
+  "name": "Pension Helper – Payment Checker (All Pensioners)",
+  "nodes": [
+    {
+      "id": "f8adddea-c405-4d09-b4e0-83eb39d3c00e",
+      "name": "Every month on the 5th at 10 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "monthsInterval": 1,
+              "triggerAtDayOfMonth": 5,
+              "triggerAtHour": 10,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "883a8f6d-411a-4b35-b706-0ea3585dd532",
+      "name": "Get all pensioners",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "CYRmkrrnEUVry94Q",
+          "cachedResultName": "pensioners"
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "80ee0fc2-0f14-458a-badb-9b608de3b0e8",
+      "name": "Get all pension payments",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        500,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ehw1P5kSSm4LjD8n",
+          "cachedResultName": "pension_payments"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "f5892d3c-beae-4bce-a483-391ea0f89d9a",
+      "name": "Check every pensioner",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Pension Helper: checks EVERY pensioner of every signed-up workspace, each with its own DA rates.\nconst WS = Object.fromEntries($('Get workspaces').all().map(i => i.json).filter(w => w.key).map(w => [w.key, w]));\nconst active = r => !!r.dataset && r.dataset !== 'demo' && !!WS[r.dataset];\nconst daFor = ds => { const w = WS[ds] || {}; return { old: Number(w.da_old ?? 55), nu: Number(w.da_new ?? 58), from: w.da_new_from || '2026-07' }; };\nconst URGENT_DAYS = 7;\n\nconst zone = 'Asia/Kolkata';\nconst today = DateTime.now().setZone(zone).startOf('day');\nconst year = today.year;\nconst inr = (n) => '₹' + Math.round(n).toLocaleString('en-IN');\nconst monthLabel = (m) => DateTime.fromFormat(m, 'yyyy-MM').toFormat('LLLL yyyy');\nconst dayIn = v => v ? DateTime.fromISO(typeof v === 'string' ? v : new Date(v).toISOString()).setZone(zone).toISODate() : null;\n\nconst pensioners = $('Get all pensioners').all().map(i => i.json).filter(p => p.name && active(p));\nconst allPayments = $('Get all pension payments').all().map(i => i.json).filter(r => r.name && r.month && active(r));\n\nreturn pensioners.map(p => {\n  const DA = daFor(p.dataset);\n  const openDate = DateTime.fromObject({ year, month: p.age >= 80 ? 10 : 11, day: 1 }, { zone });\n  const deadline = DateTime.fromObject({ year, month: 11, day: 30 }, { zone });\n  const daysLeft = Math.round(deadline.diff(today, 'days').days);\n  const verifiedUntil = dayIn(p.lc_verified_until);\n  const submitted = !!verifiedUntil && verifiedUntil > deadline.toISODate();\n  let lcStatus;\n  if (submitted) lcStatus = 'done';\n  else if (today < openDate) lcStatus = 'not_open_yet';\n  else if (daysLeft < 0) lcStatus = 'missed';\n  else if (daysLeft <= URGENT_DAYS) lcStatus = 'urgent';\n  else lcStatus = 'open';\n\n  const months = allPayments\n    .filter(r => r.name === p.name && r.dataset === p.dataset)\n    .sort((a, b) => (a.month < b.month ? -1 : 1))\n    .map(r => {\n      const da = r.month >= DA.from ? DA.nu : DA.old;\n      const expected = Math.round(r.basic_pension * (1 + da / 100) - (r.commuted_amount || 0));\n      const received = Number(r.amount_received) || 0;\n      const difference = expected - received;\n      const status = received === 0 ? 'missing' : (difference > 0 ? 'short' : 'ok');\n      return { month: r.month, expected, received, difference, status };\n    });\n  const problems = months.filter(m => m.status !== 'ok');\n  const amountShort = problems.reduce((s, m) => s + m.difference, 0);\n  const paymentStatus = months.length === 0 ? 'no_data' : (problems.length ? 'problem' : 'ok');\n  const problemSummary = problems.map(m => m.status === 'missing'\n    ? monthLabel(m.month) + ': nothing paid (' + inr(m.expected) + ' expected)'\n    : monthLabel(m.month) + ': paid ' + inr(m.received) + ' instead of ' + inr(m.expected)).join('; ');\n  const lcNeedsAction = ['open', 'urgent', 'missed'].includes(lcStatus);\n  return { json: { name: p.name, bank: p.bank, dataset: p.dataset, lc_status: lcStatus, lc_days_left: daysLeft, payment_status: paymentStatus, problem_months: problems.length, amount_short: amountShort, problem_summary: problemSummary, issues_count: problems.length + (lcNeedsAction ? 1 : 0) } };\n});"
+      }
+    },
+    {
+      "id": "d9b20e5d-b265-4148-985f-39a696dc99c6",
+      "name": "Save each result to run log",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        100
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "W6iSbJiPjep17YII",
+          "cachedResultName": "run_log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "run_at": "={{ $now.toISO() }}",
+            "name": "={{ $json.name }}",
+            "lc_status": "={{ $json.lc_status }}",
+            "payment_status": "={{ $json.payment_status }}",
+            "issues_count": "={{ $json.issues_count }}",
+            "amount_short": "={{ $json.amount_short }}",
+            "letter_source": "batch_check",
+            "dataset": "={{ $json.dataset }}"
+          },
+          "schema": [
+            {
+              "id": "run_at",
+              "displayName": "run_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lc_status",
+              "displayName": "lc_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "payment_status",
+              "displayName": "payment_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "issues_count",
+              "displayName": "issues_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "amount_short",
+              "displayName": "amount_short",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "letter_source",
+              "displayName": "letter_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dataset",
+              "displayName": "dataset",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "461b156c-411e-4d47-ae89-c3d3ec47a53f",
+      "name": "Run now (test button)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "c6beb819-97b4-4105-a559-48063adf0b82",
+      "name": "Sticky Note dcba9310",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -320
+      ],
+      "parameters": {
+        "content": "## Pension Helper – Payment Checker (everyone)\nRuns on the 5th of every month (or press \"Run now\").\n\n1. Reads every pensioner and every pension payment\n2. Works out expected vs received pension for each month, and life certificate status\n3. Saves one line per pensioner to the run_log table\n\n**Demo DA rates live in \"Check every pensioner\". Keep them the same as the Dashboard API workflow.**",
+        "color": 4,
+        "width": 520,
+        "height": 260
+      }
+    },
+    {
+      "id": "3fc50342-71a4-4546-9310-334deab3c386",
+      "name": "Get workspaces",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        620,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "I3jXUGaIDSHamJBB",
+          "cachedResultName": "workspaces"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Every month on the 5th at 10 AM": {
+      "main": [
+        [
+          {
+            "node": "Get all pensioners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all pensioners": {
+      "main": [
+        [
+          {
+            "node": "Get all pension payments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check every pensioner": {
+      "main": [
+        [
+          {
+            "node": "Save each result to run log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now (test button)": {
+      "main": [
+        [
+          {
+            "node": "Get all pensioners",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get all pension payments": {
+      "main": [
+        [
+          {
+            "node": "Get workspaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get workspaces": {
+      "main": [
+        [
+          {
+            "node": "Check every pensioner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Pension Helper: on the 5th of every month, checks every pensioner's pension payments (expected vs received) and life certificate status, and saves one line per pensioner to run_log."
+  }
+}
