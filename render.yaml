@@ -1,0 +1,45 @@
+# Render Blueprint: ONE free web service that runs the backend, which also serves every page.
+# Render gives the port in $PORT. Behind Render's proxy the app reads each visitor's real address itself
+# (needed for the "5 wrong tries, then wait" rule), so no extra uvicorn flags are needed.
+services:
+  - type: web
+    name: pension-helper
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn app:app --app-dir backend --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      # n8n webhook addresses (your-instance.app.n8n.cloud/webhook/...)
+      - key: N8N_OVERVIEW_URL
+        sync: false
+      - key: N8N_CHECK_URL
+        sync: false
+      - key: N8N_DECISION_URL
+        sync: false
+      - key: N8N_RECORD_URL
+        sync: false
+      - key: N8N_ADMIN_URL
+        sync: false
+      - key: N8N_IMPORT_URL
+        sync: false
+      - key: N8N_WORKSPACE_URL
+        sync: false
+      - key: N8N_DRAFT_URL
+        sync: false
+      - key: N8N_STORE_URL
+        sync: false
+      # secrets
+      - key: N8N_SHARED_SECRET
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      # sample office account, recreated automatically if it is missing
+      - key: SEED_OFFICE_EMAIL
+        sync: false
+      - key: SEED_OFFICE_PASSWORD
+        sync: false
+      - key: SEED_WORKSPACE_KEY
+        sync: false

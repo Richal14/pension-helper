@@ -3,6 +3,10 @@
 - Every person signs up with an email and a password (stored only as a salted PBKDF2 hash).
 - Every account owns one private workspace. Its key (for example "w12") is the `dataset` value on
   all of that workspace's rows in the n8n Data Tables, so nobody ever sees another workspace's data.
+- Hosting that wipes the disk on restart (e.g. Render's free plan): set N8N_STORE_URL. Then every
+  account, workspace and family-check fingerprint is also copied to the n8n `backend_store` table
+  (in the background), and an empty database is refilled from there when the app starts.
+  The activity log and wrong-password counters stay local only.
 """
 
 from __future__ import annotations
@@ -11,11 +15,14 @@ import hashlib
 import hmac
 import json
 import os
+import queue
 import secrets
 import sqlite3
 import threading
 import time
 from pathlib import Path
+
+import httpx
 
 DB_PATH = Path(os.getenv("PH_DB_PATH") or (Path(__file__).resolve().parent / "data" / "pension_helper_v2.db"))
 ITERATIONS = 240_000
@@ -129,6 +136,8 @@ def sign_up(email: str, password: str, role: str, display_name: str) -> tuple[di
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (email, display_name, role, ws_id, salt, digest, iters, now(), now()),
         ).lastrowid
+    _backup_workspace(ws_id)
+    _backup_account(acc_id)
     return get_account(acc_id), get_workspace(ws_id)
 
 
@@ -162,6 +171,7 @@ def set_password(account_id: int, password: str) -> None:
     with _lock, _con:
         _con.execute("UPDATE accounts SET pw_salt = ?, pw_hash = ?, pw_iter = ?, token_version = token_version + 1,"
                      " failed_attempts = 0, locked_until = 0 WHERE id = ?", (salt, digest, iters, account_id))
+    _backup_account(account_id)
 
 
 def verify_password(account_id: int, password: str) -> bool:
@@ -183,7 +193,13 @@ def update_workspace(workspace_id: int, **fields) -> dict:
     cols = ", ".join(f"{k} = ?" for k in fields)
     with _lock, _con:
         _con.execute(f"UPDATE workspaces SET {cols} WHERE id = ?", (*fields.values(), workspace_id))
+    _backup_workspace(workspace_id)
     return get_workspace(workspace_id)
+
+
+def account_by_email(email: str) -> dict | None:
+    row = _con.execute("SELECT * FROM accounts WHERE email = ?", (email,)).fetchone()
+    return dict(row) if row else None
 
 
 # ---------------------------------------------------------------- family status check
@@ -194,11 +210,13 @@ def set_lookup(workspace_id: int, pensioner_id: int, fingerprint: str) -> None:
         _con.execute("INSERT INTO family_lookup (fingerprint, workspace_id, pensioner_id, created_at) VALUES (?, ?, ?, ?)"
                      " ON CONFLICT (workspace_id, pensioner_id) DO UPDATE SET fingerprint = excluded.fingerprint, created_at = excluded.created_at",
                      (fingerprint, workspace_id, pensioner_id, now()))
+    _backup("put", f"lk:{workspace_id}:{pensioner_id}", {"fingerprint": fingerprint})
 
 
 def remove_lookup(workspace_id: int, pensioner_id: int) -> None:
     with _lock, _con:
         _con.execute("DELETE FROM family_lookup WHERE workspace_id = ? AND pensioner_id = ?", (workspace_id, pensioner_id))
+    _backup("delete", f"lk:{workspace_id}:{pensioner_id}")
 
 
 def lookup_ids(workspace_id: int) -> set[int]:
@@ -249,3 +267,126 @@ def audit(workspace_id: int | None, email: str | None, action: str, detail: str 
 def recent_audit(workspace_id: int, limit: int = 40) -> list[dict]:
     return [dict(r) for r in _con.execute(
         "SELECT at, email, action, detail FROM audit WHERE workspace_id = ? ORDER BY id DESC LIMIT ?", (workspace_id, limit))]
+
+
+# ---------------------------------------------------------------- backup to n8n (hosts that wipe the disk)
+# Off unless N8N_STORE_URL is set. Writes go through one background thread, so pages never wait for n8n.
+
+WS_COLS = ("id", "key", "kind", "name", "details", "consent_at", "consent_by", "onboarding_step", "onboarding_done", "created_at")
+ACC_COLS = ("id", "email", "display_name", "role", "workspace_id", "pw_salt", "pw_hash", "pw_iter", "token_version", "created_at")
+_queue: "queue.Queue[tuple[str, str, object]]" = queue.Queue()
+_worker: threading.Thread | None = None
+
+
+def backup_enabled() -> bool:
+    return bool(os.getenv("N8N_STORE_URL", "").strip())
+
+
+def _store(body: dict, timeout: float = 30) -> dict:
+    res = httpx.post(os.getenv("N8N_STORE_URL", "").strip(), json=body, timeout=timeout,
+                     headers={"X-Pension-Key": os.getenv("N8N_SHARED_SECRET", "").strip()})
+    data = res.json()
+    if res.status_code != 200 or not isinstance(data, dict) or not data.get("ok"):
+        raise RuntimeError(f"backend store refused the request ({res.status_code})")
+    return data
+
+
+def _send(body: dict, label: str) -> None:
+    for attempt in range(4):
+        try:
+            _store(body, timeout=60)
+            return
+        except Exception as exc:  # network hiccup: try again a little later
+            if attempt == 3:
+                print(f"[backup] could not save {label}: {exc}", flush=True)
+            time.sleep(2 * (attempt + 1))
+
+
+def _run_worker() -> None:
+    while True:
+        batch = [_queue.get()]
+        time.sleep(0.3)  # let a burst of changes (e.g. a whole upload) collect, then send it in one request
+        while True:
+            try:
+                batch.append(_queue.get_nowait())
+            except queue.Empty:
+                break
+        try:
+            latest: dict[str, tuple[str, object]] = {}
+            for action, key, value in batch:  # only the newest change per key matters
+                latest[key] = (action, value)
+            puts = [{"key": k, "value": v} for k, (a, v) in latest.items() if a == "put"]
+            for i in range(0, len(puts), 200):
+                _send({"action": "put_many", "rows": puts[i:i + 200]}, f"{len(puts)} rows")
+            for k, (a, _) in latest.items():
+                if a == "delete":
+                    _send({"action": "delete", "key": k}, k)
+        finally:
+            for _ in batch:
+                _queue.task_done()
+
+
+def _backup(action: str, key: str, value: object = None) -> None:
+    global _worker
+    if not backup_enabled():
+        return
+    if _worker is None or not _worker.is_alive():
+        _worker = threading.Thread(target=_run_worker, name="n8n-backup", daemon=True)
+        _worker.start()
+    _queue.put((action, key, value))
+
+
+def _backup_workspace(workspace_id: int) -> None:
+    row = _con.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+    if row:
+        _backup("put", f"ws:{workspace_id}", {k: row[k] for k in WS_COLS})
+
+
+def _backup_account(account_id: int) -> None:
+    row = _con.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+    if row:
+        _backup("put", f"acc:{account_id}", {k: row[k] for k in ACC_COLS})
+
+
+def flush_backup(timeout: float = 20) -> bool:
+    """Wait (up to `timeout` seconds) until every queued backup has been sent. True when all were sent."""
+    end = time.time() + timeout
+    while _queue.unfinished_tasks and time.time() < end:
+        time.sleep(0.1)
+    return not _queue.unfinished_tasks
+
+
+def restore_from_backup() -> dict:
+    """Refill an EMPTY local database from the n8n backup. Does nothing if the database already has accounts."""
+    if not backup_enabled():
+        return {"restored": False, "reason": "N8N_STORE_URL not set"}
+    if _con.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]:
+        return {"restored": False, "reason": "local database already has accounts"}
+    rows = _store({"action": "get_all"}, timeout=90).get("rows") or []
+    ws, acc, lk = [], [], []
+    for r in rows:
+        try:
+            value = json.loads(r.get("value") or "null")
+        except json.JSONDecodeError:
+            continue
+        key = str(r.get("key") or "")
+        if key.startswith("ws:") and isinstance(value, dict):
+            ws.append(value)
+        elif key.startswith("acc:") and isinstance(value, dict):
+            acc.append(value)
+        elif key.startswith("lk:") and isinstance(value, dict):
+            parts = key.split(":")
+            if len(parts) == 3:
+                lk.append((value.get("fingerprint"), int(parts[1]), int(parts[2])))
+    with _lock, _con:
+        for w in ws:
+            vals = [w.get(c) for c in WS_COLS]
+            _con.execute(f"INSERT OR REPLACE INTO workspaces ({', '.join(WS_COLS)}) VALUES ({', '.join('?' * len(WS_COLS))})", vals)
+        for a in acc:
+            vals = [a.get(c) for c in ACC_COLS]
+            _con.execute(f"INSERT OR REPLACE INTO accounts ({', '.join(ACC_COLS)}) VALUES ({', '.join('?' * len(ACC_COLS))})", vals)
+        for fp, wid, pid in lk:
+            if fp:
+                _con.execute("INSERT OR REPLACE INTO family_lookup (fingerprint, workspace_id, pensioner_id, created_at) VALUES (?, ?, ?, ?)",
+                             (fp, wid, pid, now()))
+    return {"restored": True, "workspaces": len(ws), "accounts": len(acc), "fingerprints": len(lk)}

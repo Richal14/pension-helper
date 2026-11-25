@@ -1,0 +1,403 @@
+{
+  "name": "Pension Helper – Backend Store",
+  "nodes": [
+    {
+      "id": "08b7f021-328c-4430-852e-47482a9302a5",
+      "name": "Backend saves or loads its data",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        288
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "backend-store",
+        "authentication": "none",
+        "responseMode": "responseNode",
+        "options": {
+          "onlyRunIf": "={{ $json.headers['x-pension-key'] === 'REPLACE_WITH_YOUR_N8N_SHARED_SECRET' }}"
+        }
+      },
+      "webhookId": "979eb647-e60f-4bb3-a019-f91ef24f95e3"
+    },
+    {
+      "id": "a0423e4f-3f2a-4572-919e-b59a68d6a6f6",
+      "name": "Read the request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        288
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Keeps the backend's accounts, workspaces and family-check fingerprints safe when the server's disk is wiped (e.g. Render free plan).\n// action: get_all | put {key, value} | put_many {rows: [{key, value}]} | delete {key}. Keys look like ws:3, acc:5, lk:3:57.\nconst b = $input.first().json.body || {};\nconst okKey = k => /^(ws|acc|lk):[0-9:]+$/.test(String(k || '')) && String(k).length <= 200;\nconst val = v => typeof v === 'string' ? v : JSON.stringify(v ?? null);\nif (b.action === 'get_all') return [{ json: { action: 'get_all' } }];\nif (b.action === 'put_many') {\n  const rows = (Array.isArray(b.rows) ? b.rows : []).filter(r => r && okKey(r.key)).slice(0, 500);\n  if (!rows.length) return [{ json: { action: 'invalid' } }];\n  return rows.map(r => ({ json: { action: 'put', key: String(r.key), value: val(r.value) } }));\n}\nif ((b.action === 'put' || b.action === 'delete') && okKey(b.key)) return [{ json: { action: b.action, key: String(b.key), value: val(b.value) } }];\nreturn [{ json: { action: 'invalid' } }];"
+      }
+    },
+    {
+      "id": "b660af33-e29b-461a-a900-2c7b08a670b6",
+      "name": "Which action?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        448,
+        256
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "get_all",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "get_all"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "put",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "put"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "delete",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "delete"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Invalid"
+        }
+      }
+    },
+    {
+      "id": "9a6d3a03-172a-40e5-a24f-8f465a492eb7",
+      "name": "Load everything",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "GLpiqazJluMUktLz",
+          "cachedResultName": "backend_store"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "14c481c5-d5cc-46fb-893f-13a6948a51da",
+      "name": "Reply: all rows",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, rows: $input.all().map(i => i.json).filter(r => r.key).map(r => ({ key: r.key, value: r.value })) }) }}"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "dc562b7c-1e02-4331-9bd7-941f11a39844",
+      "name": "Save one row",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "GLpiqazJluMUktLz",
+          "cachedResultName": "backend_store"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "key",
+              "condition": "eq",
+              "keyValue": "={{ $json.key }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "key": "={{ $json.key }}",
+            "value": "={{ $json.value }}",
+            "updated_at": "={{ $now.toISO() }}"
+          },
+          "schema": [
+            {
+              "id": "key",
+              "displayName": "key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "value",
+              "displayName": "value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cf75ade5-3901-4d5b-bd4c-66df5bb47d65",
+      "name": "Reply: saved",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "9535bd8d-9b77-4ee2-8a16-7202d0392dce",
+      "name": "Delete one row",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        384
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "GLpiqazJluMUktLz",
+          "cachedResultName": "backend_store"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "key",
+              "condition": "eq",
+              "keyValue": "={{ $('Read the request').first().json.key }}"
+            }
+          ]
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "10354fa5-a642-43e9-b17c-fc59ec601e80",
+      "name": "Reply: deleted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        896,
+        384
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "26bc774b-7806-4613-b208-892285337cac",
+      "name": "Reply: invalid request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        672,
+        576
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, message: \"Invalid request\" }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Backend saves or loads its data": {
+      "main": [
+        [
+          {
+            "node": "Read the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the request": {
+      "main": [
+        [
+          {
+            "node": "Which action?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which action?": {
+      "main": [
+        [
+          {
+            "node": "Load everything",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save one row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete one row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply: invalid request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load everything": {
+      "main": [
+        [
+          {
+            "node": "Reply: all rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save one row": {
+      "main": [
+        [
+          {
+            "node": "Reply: saved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete one row": {
+      "main": [
+        [
+          {
+            "node": "Reply: deleted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false,
+  "meta": {
+    "description": "Pension Helper: backend-only webhook (secret header). Safe copy of the backend's accounts (password hashes), workspaces and family-check fingerprints, so a free host that wipes its disk loses nothing. Actions: get_all, put, delete."
+  }
+}

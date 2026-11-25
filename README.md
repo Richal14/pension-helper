@@ -93,7 +93,7 @@ flowchart LR
         DB[("SQLite: accounts, audit log,<br/>family fingerprints")]
         E[".env: n8n URLs + shared secret"]
     end
-    subgraph N8N["n8n (11 workflows)"]
+    subgraph N8N["n8n (12 workflows)"]
         W["Webhooks: overview, check, decision,<br/>record certificate, admin, import,<br/>workspace, draft letters"]
         S["Schedules: reminders 9 AM, summary 8 AM,<br/>payment check + letters on the 5th"]
         T[("Data Tables: pensioners, pension_payments,<br/>grievances, run_log, workspaces")]
@@ -134,7 +134,7 @@ flowchart LR
 backend/          FastAPI app (app.py), accounts DB (db.py), validation (models.py),
                   pensioner list reader (pensioner_list.py), bank statement reader (statements.py)
 frontend/         Pages (index, status, login, signup, onboarding, office, uploads, settings) + assets/
-workflows/        The 11 n8n workflows as JSON, ready to import (see workflows/README.md)
+workflows/        The 12 n8n workflows as JSON, ready to import (see workflows/README.md)
 sample_uploads/   Made-up pensioner list and bank statements for demos
 docs/screenshots/ Screenshots of every page
 tests/            End-to-end tests (flow_test.py, status_test.py)
@@ -167,7 +167,7 @@ Run it twice and keep both values. Don't share them.
 2. **Add credentials in n8n:**
    - **Anthropic** (your API key)
    - **Gmail** (OAuth)
-3. **Import the 11 workflows.** In n8n, go to **Workflows → ⋯ → Import from File** and choose each file in `workflows/`.
+3. **Import the workflows** (11, plus `12-backend-store.json` if you deploy on Render). In n8n, go to **Workflows → ⋯ → Import from File** and choose each file in `workflows/`.
 4. **In each imported workflow:**
    - **Data Table nodes:** re-select the matching table. Table IDs are different in your n8n.
    - **Claude nodes:** pick your Anthropic credential.
@@ -203,6 +203,29 @@ cp backend/.env.example backend/.env      # Windows: copy backend\.env.example b
 
 See [`sample_uploads/README.md`](sample_uploads/README.md) for the full demo script.
 
+### Deploy on Render (free plan)
+
+Render runs the frontend and the backend as **one web service**. The backend serves the pages too.
+
+1. Import `workflows/12-backend-store.json` into n8n, and create its `backend_store` table (see [`workflows/README.md`](workflows/README.md)).
+   - **Why:** Render's free plan wipes the server's disk on every restart.
+   - **What it does:** the app keeps a copy of accounts (password hashes only), workspaces and family-check fingerprints in n8n, and reloads them when it starts with an empty disk.
+2. On [render.com](https://render.com), create a **New → Web Service** from your GitHub repo. You can also use **New → Blueprint**, which reads [`render.yaml`](render.yaml).
+3. Fill in the settings:
+   - **Runtime:** Python
+   - **Build command:** `pip install -r backend/requirements.txt`
+   - **Start command:** `uvicorn app:app --app-dir backend --host 0.0.0.0 --port $PORT`
+   - **Health check path:** `/healthz`
+4. Add the environment variables:
+   - **n8n addresses:** `N8N_OVERVIEW_URL`, `N8N_CHECK_URL`, `N8N_DECISION_URL`, `N8N_RECORD_URL`, `N8N_ADMIN_URL`, `N8N_IMPORT_URL`, `N8N_WORKSPACE_URL`, `N8N_DRAFT_URL`, `N8N_STORE_URL` (your n8n address + `/webhook/backend-store`)
+   - **Secrets:** `N8N_SHARED_SECRET`, `SESSION_SECRET`
+   - **Optional sample office**, recreated if it's missing: `SEED_OFFICE_EMAIL`, `SEED_OFFICE_PASSWORD` (10+ characters), and `SEED_WORKSPACE_KEY` to link it to sample data already in n8n
+   - **Optional Python version:** `PYTHON_VERSION` (for example `3.12.8`)
+
+On Render the session cookie is automatically HTTPS-only. The "5 wrong tries" limit uses each visitor's real address. On the free plan, the service sleeps after about 15 minutes without visitors, so the first visit after that takes up to a minute.
+
+`tests/render_test.py` checks that accounts survive a restart with an empty disk. It uses, and then empties, the `backend_store` table, so don't run it while a hosted copy is live.
+
 ### 7. Run the tests (optional)
 Each test starts its own copy of the app with a throwaway accounts database. It uses your real n8n, asks Claude for a few letters (a small cost), and deletes its test data afterwards.
 ```bash
@@ -225,7 +248,9 @@ All data in this repository is **made up**. There are no real Aadhaar, PPO or ba
 
 ## Limitations
 
-- **Local only for now.** It runs on one computer at http://localhost:8000 without HTTPS. The session cookie is not yet marked `secure`.
+- **Hosting:** it runs locally, or on Render's free plan (see "Deploy on Render"). On Render:
+  - The activity log and the wrong-password counters start fresh after each restart; accounts and data are kept.
+  - The free plan sleeps when idle.
 - **Jeevan Pramaan IDs are only format-checked.** They are not verified with the official Jeevan Pramaan service.
 - **Bank statements:** generic CSV layouts and text-based PDFs only. Scanned PDFs are refused, because there is no OCR.
 - **DA rates** are entered by hand in Settings. The defaults (55% and 58%) are demo values.
@@ -235,7 +260,7 @@ All data in this repository is **made up**. There are no real Aadhaar, PPO or ba
 
 ## Roadmap
 
-- **Hosting:** put it online with HTTPS and secure cookies, so any district office can use it from a browser.
+- **Hosting:** move accounts to a managed database on a paid plan, so the activity log survives restarts too.
 - **Certificate check:** verify Jeevan Pramaan IDs with the official service.
 - **Statements:** bank-specific statement formats, and OCR for scanned statements.
 - **Accounts:** password reset by email, and several staff users with roles inside one office.

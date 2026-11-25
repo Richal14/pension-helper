@@ -15,6 +15,7 @@ Family flow: Landing page -> "Check your pension status" (PPO number + date of b
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
 import hmac
 import json
@@ -61,8 +62,15 @@ STATUS_SECONDS = 30 * 60
 LOOKUP_SECRET = (os.getenv("LOOKUP_SECRET", "").strip() or _setting("SESSION_SECRET")).encode()
 FAMILY_MOVED = "Families don't need an account any more. Please use “Check your pension status” on the home page with the PPO number and date of birth."
 DA_DEFAULT = {"da_old": 55, "da_new": 58, "da_new_from": "2026-07"}
+# Cookies only travel over HTTPS when hosted (Render sets RENDER=true); plain http://localhost keeps working.
+SECURE_COOKIES = os.getenv("RENDER", "").lower() == "true" or os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
 
 db.init()
+# On hosts that wipe the disk on restart: refill an empty accounts database from the n8n backup (N8N_STORE_URL).
+try:
+    print("[startup] backup restore:", db.restore_from_backup(), flush=True)
+except Exception as exc:  # the app still starts; new sign-ups keep working
+    print("[startup] could not restore the backup:", exc, flush=True)
 
 # ---------------------------------------------------------------- sessions
 
@@ -106,7 +114,7 @@ def current(request: Request) -> dict | None:
 
 
 def _set_cookie(response: Response, acc: dict) -> None:
-    response.set_cookie(COOKIE, _make_token(acc), max_age=SESSION_SECONDS, httponly=True, samesite="strict", secure=False, path="/")
+    response.set_cookie(COOKIE, _make_token(acc), max_age=SESSION_SECONDS, httponly=True, samesite="strict", secure=SECURE_COOKIES, path="/")
 
 
 def signed_in(request: Request) -> dict:
@@ -140,11 +148,65 @@ def _me(acc: dict) -> dict:
 # ---------------------------------------------------------------- n8n
 
 
+SAMPLE_LIST = BASE.parent / "sample_uploads" / "pensioner_list.csv"
+
+
+async def _seed_sample_office(client: httpx.AsyncClient) -> str:
+    """Optional, for a hosted demo: make sure the sample Pension Office account exists.
+
+    Set SEED_OFFICE_EMAIL and SEED_OFFICE_PASSWORD (10+ characters). SEED_WORKSPACE_KEY (optional) links the
+    account to sample data already in n8n. Family status-check fingerprints are rebuilt from the sample list,
+    so the sample PPO + date of birth work. Runs on every start and does nothing when everything is in place.
+    """
+    email = os.getenv("SEED_OFFICE_EMAIL", "").strip().lower()
+    password = os.getenv("SEED_OFFICE_PASSWORD", "")
+    if not email or not password:
+        return "no seed account configured"
+    if not EMAIL_RE.match(email) or len(password) < 10:
+        return "SEED_OFFICE_EMAIL must be an email and SEED_OFFICE_PASSWORD at least 10 characters"
+    acc = db.account_by_email(email)
+    note = "sample office already exists"
+    if not acc:
+        office = os.getenv("SEED_OFFICE_NAME", "").strip() or "District Pension Office Ranchi"
+        acc, ws = db.sign_up(email, password, "office", "Demo Officer")
+        fields = {"name": office, "details": {"office_name": office, "district": "Ranchi", "contact_name": "Demo Officer", "phone": ""},
+                  "consent_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "consent_by": email,
+                  "onboarding_step": 3, "onboarding_done": 1}
+        key = os.getenv("SEED_WORKSPACE_KEY", "").strip()
+        if re.fullmatch(r"w\d{1,9}", key) and not db._con.execute("SELECT 1 FROM workspaces WHERE key = ?", (key,)).fetchone():
+            fields["key"] = key  # reuse the sample data already stored in n8n under this key
+        ws = db.update_workspace(ws["id"], **fields)
+        if "key" not in fields:  # a brand-new, empty workspace: register it in n8n
+            await client.post(N8N["WORKSPACE"], json={"action": "upsert", "key": ws["key"], "values": {
+                "kind": "office", "name": office, "email": email, **DA_DEFAULT}})
+        db.audit(ws["id"], email, "sample_office_created")
+        acc = db.account_by_email(email)
+        note = "sample office created"
+    ws = db.get_workspace(acc["workspace_id"])
+    if db.lookup_ids(ws["id"]) or not SAMPLE_LIST.exists():
+        return note
+    res = await client.get(N8N["OVERVIEW"], params={"dataset": ws["key"]})
+    ids = {p["name"].lower(): p["id"] for p in (res.json().get("pensioners") or [])}
+    made = 0
+    with SAMPLE_LIST.open(encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            pid, dob = ids.get((row.get("name") or "").strip().lower()), parse_date(row.get("date_of_birth") or "")
+            if pid and dob and digits(row.get("ppo_number")):
+                db.set_lookup(ws["id"], int(pid), _fingerprint(digits(row["ppo_number"]), dob.isoformat()))
+                made += 1
+    return f"{note}; family status check turned on for {made} sample pensioners"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(90, connect=10), headers={"X-Pension-Key": N8N_SHARED_SECRET})
     app.state.previews = {}
+    try:
+        print("[startup] sample office:", await _seed_sample_office(app.state.http), flush=True)
+    except Exception as exc:  # never stop the app from starting
+        print("[startup] could not prepare the sample office:", exc, flush=True)
     yield
+    db.flush_backup(10)  # send any backups still waiting before the server stops
     await app.state.http.aclose()
 
 
@@ -696,6 +758,12 @@ class StatusLookupIn(BaseModel):
 
 
 def _client(request: Request) -> str:
+    """The visitor's address, for the "5 wrong tries" limit. Behind Render's proxy every request comes from the
+    proxy, so there the LAST X-Forwarded-For entry (added by Render itself, not by the visitor) is used."""
+    if os.getenv("RENDER", "").lower() == "true":
+        forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+        if forwarded:
+            return forwarded[-1]
     return request.client.host if request.client else "unknown"
 
 
@@ -751,7 +819,7 @@ async def status_lookup(body: StatusLookupIn, request: Request, response: Respon
     hit = found[0]
     db.audit(hit["workspace_id"], None, "family_status_checked", f"pensioner #{hit['pensioner_id']}")
     response.set_cookie(STATUS_COOKIE, _status_token(hit["workspace_id"], hit["pensioner_id"]), max_age=STATUS_SECONDS,
-                        httponly=True, samesite="strict", secure=False, path="/")
+                        httponly=True, samesite="strict", secure=SECURE_COOKIES, path="/")
     return {"ok": True}
 
 
@@ -816,6 +884,12 @@ async def put_settings(body: SettingsIn, request: Request, acc: dict = Depends(s
 
 def _page(name: str) -> FileResponse:
     return FileResponse(FRONTEND / name, media_type="text/html")
+
+
+@app.get("/healthz")
+def healthz():
+    """For the hosting platform's health check: answers fast, without calling n8n."""
+    return {"ok": True}
 
 
 @app.get("/")

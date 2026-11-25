@@ -1,6 +1,6 @@
 # n8n workflows
 
-These are the 11 n8n workflows behind Pension Helper, exported as JSON. They are ready to import with **Workflows → ⋯ → Import from File**.
+These are the 12 n8n workflows behind Pension Helper, exported as JSON. They are ready to import with **Workflows → ⋯ → Import from File**.
 
 The files were cleaned for publishing:
 - **Secret:** the shared secret is replaced by `REPLACE_WITH_YOUR_N8N_SHARED_SECRET`.
@@ -20,12 +20,13 @@ The files were cleaned for publishing:
 | `08-pensioner-admin.json` | Pensioner Admin: add / add many / edit / delete | Webhook `POST /pensioner-admin` | pensioners, pension_payments, grievances, run_log |
 | `09-import-payments.json` | Import Payments: monthly totals from bank statements | Webhook `POST /import-payments` | pension_payments |
 | `11-workspaces.json` | Workspaces: an office's name, email and DA rates | Webhook `POST /pension-workspace` | workspaces |
+| `12-backend-store.json` | Backend Store: a backup of accounts (password hashes only), workspaces and family-check fingerprints, for hosting that wipes its disk (e.g. Render free plan) | Webhook `POST /backend-store` | backend_store |
 
 (Number 10 was an older Settings workflow, replaced by 11.)
 
 ## Data Tables to create first
 
-Create these 5 tables in n8n (**Overview → Data tables**) with exactly these column names. Types: `s` = string, `n` = number, `b` = boolean, `d` = date.
+Create these tables in n8n (**Overview → Data tables**) with exactly these column names. Types: `s` = string, `n` = number, `b` = boolean, `d` = date. `backend_store` is only needed if you host the app somewhere that wipes its disk.
 
 | Table | Columns |
 |---|---|
@@ -34,6 +35,7 @@ Create these 5 tables in n8n (**Overview → Data tables**) with exactly these c
 | `grievances` | name s, bank s, issue_type s, problem_summary s, amount_short n, letter s, letter_source s, status s, created_at d, approved_at d, timeline s, dataset s |
 | `run_log` | run_at d, name s, lc_status s, payment_status s, issues_count n, amount_short n, letter_source s, dataset s |
 | `workspaces` | key s, kind s, name s, email s, da_old n, da_new n, da_new_from s, created_at d |
+| `backend_store` | key s, value s, updated_at d |
 
 ## After importing each workflow
 
