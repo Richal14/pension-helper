@@ -28,6 +28,9 @@ venv/
 __pycache__/
 *.pyc
 
+# ---- Copy of the public files made for manual upload ----
+upload_to_github/
+
 # ---- Media work files ----
 video/*.mp4
 video/raw/
